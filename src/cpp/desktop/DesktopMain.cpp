@@ -14,6 +14,8 @@
 #include <QtGui>
 #include <QtWebKit>
 
+#include "3rdparty/qtsingleapplication/qtsingleapplication.h"
+
 #include <boost/bind.hpp>
 #include <boost/function.hpp>
 #include <boost/scoped_ptr.hpp>
@@ -189,7 +191,7 @@ int main(int argc, char* argv[])
                                   logPath);
 
 
-      boost::scoped_ptr<QApplication> pApp;
+      boost::scoped_ptr<QtSingleApplication> pApp;
       boost::scoped_ptr<ApplicationLaunch> pAppLaunch;
       ApplicationLaunch::init(QString::fromAscii("RStudio"),
                               argc,
@@ -209,6 +211,16 @@ int main(int argc, char* argv[])
       if (pApp->arguments().size() > 1)
          filename = verifyAndNormalizeFilename(pApp->arguments().last());
 #endif
+
+      // determine instance id based on presence of project file
+      // NOTE: only do the toLower on windows & the mac!
+      QString instanceId(QString::fromAscii("RStudio"));
+      FilePath filePath(filename.toUtf8().constData());
+      if (filePath.exists() && filePath.extension() == ".Rproj")
+         instanceId = filename.toLower();
+
+      // call sysInit on the app to initialize multi-instance tracking
+      pApp->initInstanceTracking(instanceId);
 
       // try to activate existing instance...exit if we do
       if (pAppLaunch->sendMessage(filename))

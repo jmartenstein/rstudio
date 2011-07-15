@@ -17,7 +17,10 @@
 #include <QObject>
 #include <QWidget>
 #include <QApplication>
+
 #include <boost/scoped_ptr.hpp>
+
+class QtSingleApplication;
 
 namespace desktop {
 
@@ -28,7 +31,7 @@ public:
    static void init(QString appname,
                     int& argc,
                     char* argv[],
-                    boost::scoped_ptr<QApplication>* ppApp,
+                    boost::scoped_ptr<QtSingleApplication>* ppApp,
                     boost::scoped_ptr<ApplicationLaunch>* ppAppLaunch);
 
    void setActivationWindow(QWidget* pWindow);

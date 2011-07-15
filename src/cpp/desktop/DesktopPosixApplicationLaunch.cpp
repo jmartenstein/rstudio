@@ -39,7 +39,7 @@ ApplicationLaunch::ApplicationLaunch() :
 void ApplicationLaunch::init(QString appName,
                              int& argc,
                              char* argv[],
-                             boost::scoped_ptr<QApplication>* ppApp,
+                             boost::scoped_ptr<QtSingleApplication>* ppApp,
                              boost::scoped_ptr<ApplicationLaunch>* ppAppLaunch)
 {
    // Immediately stuffed into scoped_ptr

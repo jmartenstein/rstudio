@@ -79,6 +79,8 @@ public:
     QtSingleApplication(Display* dpy, const QString &appId, int argc, char **argv, Qt::HANDLE visual = 0, Qt::HANDLE colormap = 0);
 #endif
 
+    void initInstanceTracking(const QString &appId = QString());
+
     bool isRunning();
     QString id() const;
 
@@ -99,7 +101,6 @@ Q_SIGNALS:
 
 
 private:
-    void sysInit(const QString &appId = QString());
     QtLocalPeer *peer;
     QWidget *actWin;
 };
