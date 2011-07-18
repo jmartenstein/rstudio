@@ -13,6 +13,8 @@
 
 #include <iostream>
 
+#include <boost/lexical_cast.hpp>
+
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 #include <core/system/System.hpp>
@@ -21,7 +23,24 @@
 
 using namespace core ;
 
+int exitFailure(const Error& error, const ErrorLocation& location)
+{
+   core::log::logError(error, location);
+   return EXIT_FAILURE;
+}
 
+class PrintExitStatus : public process::Child
+{
+public:
+
+   virtual void onExit(int exitCode)
+   {
+
+      std::cout << "process " << id() << " exited with status " << exitCode << std::endl;
+   }
+
+
+};
 
 int main(int argc, char * const argv[]) 
 {
@@ -31,6 +50,26 @@ int main(int argc, char * const argv[])
       initializeSystemLog("rsupervisor", core::system::kLogLevelWarning);
 
 
+      process::Supervisor supervisor;
+
+      // fire off a bunch of processess
+      for (int i = 0; i<10; i++)
+      {
+         std::string arg = boost::lexical_cast<std::string>(i);
+         std::vector<std::string> args;
+         args.push_back(arg);
+
+         boost::shared_ptr<process::Child> pChild;
+         Error error = supervisor.createChild("sleep", args, &pChild);
+         if (error)
+            LOG_ERROR(error);
+
+         std::cout << "created pid " << pChild->id() << std::endl;
+
+      }
+
+      while (true)
+         supervisor.processEvents();
 
 
 
