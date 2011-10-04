@@ -25,7 +25,8 @@ public class UIPrefs extends Prefs
    @Inject
    public UIPrefs(Session session)
    {
-      super(session.getSessionInfo().getUiPrefs());
+      super(session.getSessionInfo().getUiPrefs(),
+            session.getSessionInfo().getProjectUIPrefs());
    }
 
    public PrefValue<Boolean> showLineNumbers()
@@ -48,11 +49,13 @@ public class UIPrefs extends Prefs
       return object("pane_config");
    }
 
+   // NOTE: UserSettings.cpp depends on the name of this value
    public PrefValue<Boolean> useSpacesForTab()
    {
       return bool("use_spaces_for_tab", true);
    }
 
+   // NOTE: UserSettings.cpp depends on the name of this value
    public PrefValue<Integer> numSpacesForTab()
    {
       return integer("num_spaces_for_tab", 2);
@@ -93,6 +96,7 @@ public class UIPrefs extends Prefs
       return string("theme", null);
    }
 
+   // NOTE: UserSettings.cpp depends on the name of this value
    public PrefValue<String> defaultEncoding()
    {
       return string("default_encoding", "");
@@ -105,7 +109,7 @@ public class UIPrefs extends Prefs
    
    public PrefValue<Boolean> toolbarVisible()
    {
-      return bool("toolbar_show", true);
+      return bool("toolbar_visible", true);
    }
    
    public PrefValue<Boolean> sourceWithEcho()

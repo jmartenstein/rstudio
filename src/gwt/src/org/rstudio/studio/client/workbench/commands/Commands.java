@@ -38,11 +38,15 @@ public abstract class
    public abstract AppCommand sourceFile();
    public abstract AppCommand sourceActiveDocument();
    public abstract AppCommand sourceActiveDocumentWithEcho();
+   public abstract AppCommand complete();
    public abstract AppCommand executeCode();
    public abstract AppCommand executeToCurrentLine();
    public abstract AppCommand executeFromCurrentLine();
    public abstract AppCommand executeCurrentFunction();
    public abstract AppCommand executeLastCode();
+   public abstract AppCommand goToFunctionDefinition();
+   public abstract AppCommand sourceNavigateBack();
+   public abstract AppCommand sourceNavigateForward();
    public abstract AppCommand compilePDF();
    public abstract AppCommand publishPDF();
    public abstract AppCommand activateSource();
@@ -51,6 +55,7 @@ public abstract class
    public abstract AppCommand findReplace();
    public abstract AppCommand extractFunction();
    public abstract AppCommand commentUncomment();
+   public abstract AppCommand reindent();
    public abstract AppCommand setWorkingDirToActiveDoc();
    
    // Projects
@@ -109,12 +114,13 @@ public abstract class
    public abstract AppCommand showToolbar();
    public abstract AppCommand hideToolbar();
    public abstract AppCommand jumpToFunction();
-   public abstract AppCommand goToFunctionFile();
+   public abstract AppCommand goToFileFunction();
    public abstract AppCommand switchToTab();
    public abstract AppCommand previousTab();
    public abstract AppCommand nextTab();
    public abstract AppCommand firstTab();
    public abstract AppCommand lastTab();
+   public abstract AppCommand goToLine();
 
    // History
    public abstract AppCommand historySendToSource();

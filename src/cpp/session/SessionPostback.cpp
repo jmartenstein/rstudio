@@ -41,6 +41,7 @@ To create a new postback handler for an action 'foo' do the following:
 #include <boost/function.hpp>
 
 #include <core/Error.hpp>
+#include <core/SafeConvert.hpp>
 
 #include <core/http/Request.hpp>
 #include <core/http/Response.hpp>
@@ -59,18 +60,27 @@ namespace {
 std::map<std::string,
          module_context::PostbackHandlerFunction> s_postbackHandlers;
 
+void endHandlePostback(const http::UriHandlerFunctionContinuation& cont,
+                       int exitCode,
+                       const std::string& output)
+{
+   http::Response response;
+   // send basic response
+   response.setStatusCode(http::status::Ok);
+   response.setContentType("text/plain");
+   response.setHeader(kPostbackExitCodeHeader,
+                        boost::lexical_cast<std::string>(exitCode));
+   response.setBody(output);
+   cont(&response);
+}
+
 // UriHandlerFunction wrapper for simple postbacks
 void handlePostback(const PostbackHandlerFunction& handlerFunction,
                     const http::Request& request, 
-                    http::Response* pResponse)
+                    const http::UriHandlerFunctionContinuation& cont)
 {
    // pass the body to the postback function
-   handlerFunction(request.body());
-   
-   // send basic response
-   pResponse->setStatusCode(http::status::Ok);
-   pResponse->setContentType("text/plain");
-   pResponse->setBody("");
+   handlerFunction(request.body(), boost::bind(endHandlePostback, cont, _1, _2));
 }
    
 } // anonymous namespace
@@ -84,7 +94,7 @@ Error registerPostbackHandler(const std::string& name,
    std::string postback = kPostbackUriScope + name;
    
    // register a uri handler for this prefix
-   Error error = module_context::registerLocalUriHandler(
+   Error error = module_context::registerAsyncLocalUriHandler(
                     postback,
                     boost::bind(handlePostback, handlerFunction, _1, _2));
    if (error)

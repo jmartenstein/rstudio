@@ -1,0 +1,13 @@
+
+.functionName {
+   margin-right: 5px;
+}
+
+.functionNamespace {
+	color: #888;
+}
+
+.readOnly {
+   margin-right: 7px;
+   color: #888;
+}

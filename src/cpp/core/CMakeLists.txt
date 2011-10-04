@@ -18,6 +18,7 @@ file(GLOB_RECURSE CORE_HEADER_FILES "*.h*")
 
 # source files
 set (CORE_SOURCE_FILES
+   Assert.cpp
    BoostErrors.cpp
    ConfigUtils.cpp
    DateTime.cpp
@@ -28,11 +29,14 @@ set (CORE_SOURCE_FILES
    FilePath.cpp
    FileSerializer.cpp
    Hash.cpp
+   Log.cpp
+   LogWriter.cpp
    PerformanceTimer.cpp
    ProgramOptions.cpp
+   RegexUtils.cpp
    SafeConvert.cpp
    Settings.cpp
-   Log.cpp
+   StderrLogWriter.cpp
    StringUtils.cpp
    Thread.cpp
    WaitUtils.cpp
@@ -57,8 +61,11 @@ set (CORE_SOURCE_FILES
    r_util/RTokenizer.cpp
    r_util/RSourceIndex.cpp
    r_util/RTokenizerTests.cpp
+   system/Environment.cpp
    system/Process.cpp
+   system/ShellUtils.cpp
    system/System.cpp
+   system/file_monitor/FileMonitor.cpp
    text/DcfParser.cpp
    text/TemplateFilter.cpp
 )
@@ -68,8 +75,8 @@ if (UNIX)
 
    # platform introspection
    check_symbol_exists(SA_NOCLDWAIT "signal.h" HAVE_SA_NOCLDWAIT)
-   check_function_exists(inotify_init1 HAVE_INOTIFY)
    check_symbol_exists(SO_PEERCRED "sys/socket.h" HAVE_SO_PEERCRED)
+   check_function_exists(inotify_init1 HAVE_INOTIFY_INIT1)
    check_function_exists(getpeereid HAVE_GETPEEREID)
    if(EXISTS "/proc/self")
       set(HAVE_PROCSELF TRUE)
@@ -84,19 +91,18 @@ if (UNIX)
    endif()
    find_package(ZLIB REQUIRED QUIET)
 
+   # find apple frameworks we depend on
+   if(APPLE)
+      find_library(CORE_SERVICES_LIBRARY NAMES CoreServices)
+   endif()
+
    # include directories and libraries
    set (CORE_SYSTEM_LIBRARIES
       ${PTHREAD_LIBRARIES}
       ${UUID_LIBRARIES}
       ${ZLIB_LIBRARIES}
+      ${CORE_SERVICES_LIBRARY}
    )
-
-   # make directory monitor conditional
-   if(HAVE_INOTIFY)
-      set(DIRECTORY_MONITOR_CPP system/INotifyDirectoryMonitor.cpp)
-   else()
-      set(DIRECTORY_MONITOR_CPP system/DirectoryMonitor.cpp)
-   endif()
 
    # source files
    set(CORE_SOURCE_FILES ${CORE_SOURCE_FILES}
@@ -104,12 +110,25 @@ if (UNIX)
       PosixStringUtils.cpp
       r_util/REnvironmentPosix.cpp
       SyslogLogWriter.cpp
+      system/PosixEnvironment.cpp
+      system/PosixFileScanner.cpp
       system/PosixParentProcessMonitor.cpp
       system/PosixOutputCapture.cpp
+      system/PosixShellUtils.cpp
       system/PosixSystem.cpp
       system/PosixUser.cpp
       system/PosixChildProcess.cpp
    )
+
+   if(APPLE)
+      set(CORE_SOURCE_FILES ${CORE_SOURCE_FILES}
+         system/file_monitor/MacFileMonitor.cpp
+      )
+   else()
+      set(CORE_SOURCE_FILES ${CORE_SOURCE_FILES}
+         system/file_monitor/LinuxFileMonitor.cpp
+      )
+   endif()
 
 # Win32 specific
 else()
@@ -120,12 +139,15 @@ else()
    # source files
    set(CORE_SOURCE_FILES ${CORE_SOURCE_FILES}
       Win32StringUtils.cpp
-      system/DirectoryMonitor.cpp
+      system/Win32FileScanner.cpp
       system/RegistryKey.cpp
+      system/Win32Environment.cpp
       system/Win32ParentProcessMonitor.cpp
       system/Win32OutputCapture.cpp
+      system/Win32ShellUtils.cpp
       system/Win32System.cpp
       system/Win32ChildProcess.cpp
+      system/file_monitor/Win32FileMonitor.cpp
    )
 
 endif()

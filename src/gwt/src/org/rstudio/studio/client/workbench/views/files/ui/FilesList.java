@@ -26,6 +26,7 @@ import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.common.filetypes.FileIconResources;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
+import org.rstudio.studio.client.common.vcs.VCSStatus;
 import org.rstudio.studio.client.common.vcs.VCSStrategy;
 import org.rstudio.studio.client.workbench.views.files.Files;
 import org.rstudio.studio.client.workbench.views.files.model.FileChange;
@@ -169,7 +170,7 @@ public class FilesList extends Composite
             public ImageResource getValue(FileSystemItem object)
             {
                return VCSStrategy.getCurrentStrategy().getSimpleIconForStatus(
-                     object.getVCSStatus());
+                     new VCSStatus(object.getVCSStatus().getStatus()));
             }
          };
       iconColumn.setSortable(true);
@@ -182,7 +183,8 @@ public class FilesList extends Composite
          @Override
          public int doCompare(FileSystemItem a, FileSystemItem b)
          {
-            return a.getVCSStatus().compareTo(b.getVCSStatus());
+            return a.getVCSStatus().getStatus().compareTo(
+                  b.getVCSStatus().getStatus());
          }
       });
 
@@ -423,7 +425,7 @@ public class FilesList extends Composite
    }
    
    public void updateWithAction(FileChange viewAction)
-   {   
+   {        
       final FileSystemItem file = viewAction.getFile();
       final List<FileSystemItem> files = getFiles();
       switch(viewAction.getType())
@@ -463,6 +465,13 @@ public class FilesList extends Composite
             if (row != -1)
             {
                files.remove(row);
+               
+               // if a file is deleted and then re-added within the same
+               // event loop (as occurs when gedit saves a text file) the
+               // table doesn't always update correctly (it has a duplicate
+               // of the item deleted / re-added). the call to flush overcomes
+               // this issue
+               dataProvider_.flush();
             }
          }
          break;

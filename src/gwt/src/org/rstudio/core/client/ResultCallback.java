@@ -1,5 +1,5 @@
 /*
- * SpanLabel.java
+ * ResultCallback.java
  *
  * Copyright (C) 2009-11 by RStudio, Inc.
  *
@@ -10,17 +10,15 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-package org.rstudio.studio.client.workbench.prefs.views;
+package org.rstudio.core.client;
 
-import com.google.gwt.dom.client.Document;
-import com.google.gwt.user.client.ui.Label;
-
-class SpanLabel extends Label
+/**
+ * Provides a generic interface for handling success and/or failure of an
+ * operation, especially an asynchronous one.
+ */
+public abstract class ResultCallback<TSuccess, TFailure>
 {
-   SpanLabel(String label, boolean wordWrap)
-   {
-      super(Document.get().createSpanElement());
-      setText(label);
-      setWordWrap(wordWrap);
-   }
+   public void onSuccess(TSuccess result) {}
+   public void onFailure(TFailure info) {}
+   public void onCancelled() {}
 }

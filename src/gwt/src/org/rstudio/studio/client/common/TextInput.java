@@ -12,6 +12,7 @@
  */
 package org.rstudio.studio.client.common;
 
+import org.rstudio.core.client.widget.Operation;
 import org.rstudio.core.client.widget.ProgressOperationWithInput;
 
 public interface TextInput
@@ -19,8 +20,11 @@ public interface TextInput
    public void promptForText(String title,
                              String label,
                              String initialValue,
+                             boolean usePasswordMask,
+                             boolean numbersOnly,
                              int selectionStart,
                              int selectionLength,
                              String okButtonCaption,
-                             ProgressOperationWithInput<String> operation);
+                             ProgressOperationWithInput<String> okOperation,
+                             Operation cancelOperation);
 }

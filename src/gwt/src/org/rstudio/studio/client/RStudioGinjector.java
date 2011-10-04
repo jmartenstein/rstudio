@@ -23,10 +23,12 @@ import org.rstudio.studio.client.common.FileDialogs;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.filetypes.NewFileMenu;
+import org.rstudio.studio.client.common.impl.DesktopFileDialogs;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
+import org.rstudio.studio.client.workbench.views.console.shell.assist.RCompletionManager;
 import org.rstudio.studio.client.workbench.views.source.DocsMenu;
 import org.rstudio.studio.client.workbench.views.source.editors.text.AceEditor;
 
@@ -35,11 +37,11 @@ public interface RStudioGinjector extends Ginjector
 {
    void injectMembers(NewFileMenu newFileMenu);
    void injectMembers(DocsMenu docsMenu);
-
    void injectMembers(DesktopApplicationHeader desktopApplicationHeader);
    void injectMembers(WebApplicationHeader webApplicationHeader);
-
    void injectMembers(AceEditor aceEditor);
+   void injectMembers(DesktopFileDialogs desktopFileDialogs);
+   void injectMembers(RCompletionManager rCompletionManager);
 
    public static final RStudioGinjector INSTANCE = GWT.create(RStudioGinjector.class);
 

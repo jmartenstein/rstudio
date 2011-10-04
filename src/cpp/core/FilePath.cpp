@@ -292,6 +292,19 @@ bool FilePath::exists() const
     }
 }
 
+bool FilePath::isSymlink() const
+{
+   try
+   {
+      return exists() && boost::filesystem::is_symlink(pImpl_->path);
+   }
+   catch(const boost::filesystem::filesystem_error& e)
+   {
+      logError(pImpl_->path, e, ERROR_LOCATION);
+      return false;
+   }
+}
+
 uintmax_t FilePath::size() const
 {
    try 
@@ -939,6 +952,63 @@ bool compareAbsolutePathNoCase(const FilePath& file1, const FilePath& file2)
    std::string file2Lower = string_utils::toLower(file2.absolutePath());
    return file1Lower < file2Lower;
 }
+
+struct RecursiveDirectoryIterator::Impl
+{
+   explicit Impl(path_t path)
+      : itr_(path), end_()
+   {
+   }
+   recursive_dir_iterator itr_;
+   recursive_dir_iterator end_;
+   std::string lastPath_;
+};
+
+
+RecursiveDirectoryIterator::RecursiveDirectoryIterator(
+                                                   const FilePath& filePath)
+    : pImpl_(new Impl(filePath.pImpl_->path))
+{
+}
+
+RecursiveDirectoryIterator::~RecursiveDirectoryIterator()
+{
+}
+
+Error RecursiveDirectoryIterator::next(FilePath* pFilePath)
+{
+   try
+   {
+      // calling next() when we are already finished is illegal
+      if (finished())
+      {
+         return systemError(boost::system::errc::operation_not_permitted,
+                            ERROR_LOCATION);
+      }
+
+      // get the next file path (save it so we can use it in error messages)
+      pImpl_->lastPath_ = BOOST_FS_PATH2STR(pImpl_->itr_->path());
+      *pFilePath = FilePath(pImpl_->lastPath_);
+
+      // increment the iterator
+      ++(pImpl_->itr_);
+
+      // success
+      return Success();
+   }
+   catch(const boost::filesystem::filesystem_error& e)
+   {
+      Error error(e.code(), ERROR_LOCATION);
+      error.addProperty("last-path", pImpl_->lastPath_);
+      return error;
+   }
+}
+
+bool RecursiveDirectoryIterator::finished() const
+{
+   return pImpl_->itr_ == pImpl_->end_;
+}
+
 
 namespace { 
 void logError(path_t path,

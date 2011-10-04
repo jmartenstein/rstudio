@@ -169,6 +169,23 @@ Error fileExistsError(const ErrorLocation& location)
 #endif
 }
 
+Error fileNotFoundError(const ErrorLocation& location)
+{
+#ifdef _WIN32
+   return systemError(boost::system::windows_error::file_not_found, location);
+#else
+   return systemError(boost::system::errc::no_such_file_or_directory, location);
+#endif
+}
+
+Error fileNotFoundError(const std::string& path,
+                        const ErrorLocation& location)
+{
+   Error error = fileNotFoundError(location);
+   error.addProperty("path", path);
+   return error;
+}
+
 Error pathNotFoundError(const ErrorLocation& location)
 {
 #ifdef _WIN32
@@ -191,14 +208,14 @@ struct ErrorLocation::Impl
    {
    }
    
-   Impl(const char* function, const char* file, int line) 
+   Impl(const char* function, const char* file, long line)
       : function(function), file(file), line(line) 
    {
    }
    
    std::string function ;
    std::string file ;
-   int line ;
+   long line ;
 };
 
 ErrorLocation::ErrorLocation()
@@ -206,7 +223,7 @@ ErrorLocation::ErrorLocation()
 {
 }
 
-ErrorLocation::ErrorLocation(const char* function, const char* file, int line) 
+ErrorLocation::ErrorLocation(const char* function, const char* file, long line)
    : pImpl_(new Impl(function, file, line)) 
 {
 }
@@ -231,7 +248,7 @@ const std::string& ErrorLocation::file() const
    return pImpl_->file ;
 }
 
-int ErrorLocation::line() const 
+long ErrorLocation::line() const
 {
    return pImpl_->line ;
 }

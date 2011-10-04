@@ -25,6 +25,7 @@
 #include <core/Log.hpp>
 #include <core/Settings.hpp>
 #include <core/system/System.hpp>
+#include <core/system/Environment.hpp>
 #include <core/FileSerializer.hpp>
 
 #include <r/RExec.hpp>
@@ -60,6 +61,9 @@ extern "C" SA_TYPE SaveAction;
 // get rid of windows TRUE and FALSE definitions
 #undef TRUE
 #undef FALSE
+
+// constants for graphics scratch subdirectory
+#define kGraphicsPath "graphics"
 
 using namespace core ;
 
@@ -101,11 +105,6 @@ public:
    SuppressOutputInScope() { s_suppressOuput = true; }
    ~SuppressOutputInScope() { s_suppressOuput = false; }
 };
-
-FilePath plotsStateFilePath()
-{
-   return s_options.scopedScratchPath.complete("graphics/INDEX");
-}
 
 FilePath rHistoryFilePath()
 {
@@ -158,55 +157,14 @@ void reportDeferredDeserializationError(const Error& error)
    REprintf((errMsg + "\n").c_str());
 }
 
-void restoreWorkingState()
-{
-   // restore client metrics so the plot doesn't need to re-render
-   client_metrics::restore(s_options.persistentState());
-
-   // for migration we may need to restore from the suspended plots file
-   // or from the plots file contained in the root of the scopedScratchDir
-   // TODO: eliminate these migration-oriented checks once we are
-   // sufficiently clear of the migration date (7/11/2011)
-   FilePath plotsFile = plotsStateFilePath();
-   FilePath oldPlotsFile = s_options.scopedScratchPath.complete("plots");
-   FilePath suspendedPlotsFile = s_suspendedSessionPath.childPath("plots");
-   if (!plotsFile.exists())
-   {
-      // look in other potential locations for the file (migration)
-      plotsFile = oldPlotsFile;
-      if (!plotsFile.exists() && s_suspendedSessionPath.exists())
-         plotsFile = suspendedPlotsFile;
-   }
-   else
-   {
-      // the first time we find the plots state file in the correct
-      // location we can delete it from the old locations
-      Error error = oldPlotsFile.removeIfExists();
-      if (error)
-         LOG_ERROR(error);
-      error = suspendedPlotsFile.removeIfExists();
-      if (error)
-         LOG_ERROR(error);
-   }
-
-   // restore the plots
-   Error plotError = graphics::plotManager().restorePlotsState(plotsFile);
-   if (plotError)
-      reportDeferredDeserializationError(plotError);
-}
-
-
 void completeDeferredSessionInit()
 {
-   // restore client metrics and plots
-   restoreWorkingState();
-
    // call external hook
    if (s_callbacks.deferredInit)
       s_callbacks.deferredInit();
 }
 
-void saveWorkingState(ClientStateCommitType commitType)
+void saveClientState(ClientStateCommitType commitType)
 {
    using namespace r::session;
 
@@ -217,14 +175,6 @@ void saveWorkingState(ClientStateCommitType commitType)
    r::session::clientState().commit(commitType,
                                     s_clientStatePath,
                                     s_projectClientStatePath);
-
-   // save client metrics
-   client_metrics::save(&(s_options.persistentState()));
-
-   // save plots state
-   Error error = graphics::plotManager().savePlotsState(plotsStateFilePath());
-   if (error)
-      LOG_ERROR(error);
 }
 
 
@@ -396,9 +346,8 @@ Error initialize()
    }
 
    // initialize graphics device
-   FilePath graphicsPath = s_options.scopedScratchPath.complete("graphics");
-   error = graphics::device::initialize(plotsStateFilePath(),
-                                        graphicsPath,
+   FilePath graphicsPath = s_options.scopedScratchPath.complete(kGraphicsPath);
+   error = graphics::device::initialize(graphicsPath,
                                         s_callbacks.locator);
    if (error) 
       return error;
@@ -457,8 +406,8 @@ Error initialize()
       error = consoleHistory().loadFromFile(historyPath, false);
       if (error)
          reportHistoryAccessError("read history from", historyPath, error);
-      
-      // defer loading of global environment and plots
+
+      // defer loading of global environment
       s_deferredDeserializationAction = deferredRestoreNewSession;
    }
    
@@ -1055,12 +1004,10 @@ void RCleanUp(SA_TYPE saveact, int status, int runLast)
             r::exec::error("Unable to quit (session cleanup failure)\n");
          }
 
-         // commit working state (client state and plots)
-         saveWorkingState(ClientStateCommitPersistentOnly);
+         // commit client state
+         saveClientState(ClientStateCommitPersistentOnly);
 
-         // clear display (closes the device, however graphics files
-         // are not deleted because saveWorkingState turned off
-         // device events).
+         // clear display
          r::session::graphics::display().clear();
          
          // print warnings (do this here even though R does it within 
@@ -1289,8 +1236,8 @@ bool isSuspendable(const std::string& currentPrompt)
    
 bool suspend(bool force)
 {
-   // commit all working state
-   saveWorkingState(ClientStateCommitAll);
+   // commit all client state
+   saveClientState(ClientStateCommitAll);
 
    // save the session state. errors are handled internally and reported
    // directly to the end user and written to the server log.
@@ -1404,7 +1351,6 @@ FilePath tempDir()
    FilePath filePath(r::util::fixPath(tempDir));
    return filePath;
 }
-
 
 } // namespace utils
    

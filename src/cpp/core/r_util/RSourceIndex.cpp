@@ -38,7 +38,7 @@ std::wstring removeQuoteDelims(const std::wstring& input)
 
 RSourceIndex::RSourceIndex(const std::string& context,
                            const std::string& code)
-  : context_(context)
+   : context_(context)
 {
    // convert code to wide
    std::wstring wCode = string_utils::utf8ToWide(code);
@@ -55,7 +55,8 @@ RSourceIndex::RSourceIndex(const std::string& context,
    // tokenize
    RTokens rTokens(wCode, RTokens::StripWhitespace | RTokens::StripComments);
 
-   // scan for function, method, and class definitions
+   // scan for function, method, and class definitions (track indent level)
+   int braceLevel = 0;
    std::wstring function(L"function");
    std::wstring set(L"set");
    std::wstring setGeneric(L"setGeneric");
@@ -76,9 +77,23 @@ RSourceIndex::RSourceIndex(const std::string& context,
       // alias the token
       const RToken& token = rTokens.at(i);
 
-      // bail if this isn't an identifier
-      if (token.type() != RToken::ID)
+      // see if this is a begin or end brace and update the level
+      if (token.type() == RToken::LBRACE)
+      {
+         braceLevel++;
          continue;
+      }
+
+      else if (token.type() == RToken::RBRACE)
+      {
+         braceLevel--;
+         continue;
+      }
+      // bail for non-identifiers
+      else if (token.type() != RToken::ID)
+      {
+         continue;
+      }
 
       // is this a potential method or class definition?
       if (token.contentStartsWith(set))
@@ -176,30 +191,10 @@ RSourceIndex::RSourceIndex(const std::string& context,
       // add to index
       items_.push_back(RSourceItem(type,
                                    string_utils::wideToUtf8(name),
+                                   braceLevel,
                                    line,
                                    column));
    }
-}
-
-
-boost::regex RSourceIndex::patternToRegex(const std::string& pattern)
-{
-   // split into componenents
-   using namespace boost::algorithm;
-   std::vector<std::string> components;
-   split(components, pattern, is_any_of("*"), token_compress_on);
-
-   // build and return regex
-   std::string regex;
-   for (std::size_t i=0; i<components.size(); i++)
-   {
-      if (i > 0)
-         regex.append(".*");
-      regex.append("\\Q");
-      regex.append(components.at(i));
-      regex.append("\\E");
-   }
-   return boost::regex(regex);
 }
 
 

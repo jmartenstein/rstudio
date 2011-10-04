@@ -128,6 +128,11 @@ public class SessionInfo extends JavaScriptObject
    {
       return !StringUtil.isNullOrEmpty(getVcsName());
    }
+
+   public final String[] getAvailableVCS()
+   {
+      return this.<JsObject>cast().getString("vcs_available", true).split(",");
+   }
    
    public final native String getVcsName() /*-{
       return this.vcs;
@@ -158,10 +163,11 @@ public class SessionInfo extends JavaScriptObject
          return null;
       }
    }
-   
-   public final native boolean isIndexingEnabled()/*-{
-      return this.indexing_enabled;
-   }-*/;
-   
+  
+   public final native JsObject getProjectUIPrefs() /*-{
+      if (!this.project_ui_prefs)
+         this.project_ui_prefs = {};
+      return this.project_ui_prefs;
+   }-*/;   
 }
 

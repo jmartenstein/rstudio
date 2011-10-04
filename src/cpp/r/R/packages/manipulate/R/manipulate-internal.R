@@ -90,6 +90,41 @@ userVisibleValues <- function(manipulator, variables)
   mget(variables, envir = get(".userVisibleValues", envir = manipulator))
 }
 
+buttonNames <- function(manipulator)
+{
+  if (exists(".buttonNames", envir = manipulator))
+    get(".buttonNames", envir = manipulator)
+  else
+    character()
+}
+
+trackingMouseClicks <- function(manipulator)
+{
+  exists(".mouseClick", envir = manipulator)
+}
+
+setMouseClick <- function(manipulator,
+                          deviceX,
+                          deviceY,
+                          userX,
+                          userY,
+                          ndcX,
+                          ndcY)
+{
+  mouseClick <- list(deviceX = deviceX,
+                     deviceY = deviceY,
+                     userX = userX,
+                     userY = userY,
+                     ndcX = ndcX,
+                     ndcY = ndcY)
+  assign(".mouseClick", mouseClick, envir = manipulator)
+}
+
+clearMouseClick <- function(manipulator)
+{
+  assign(".mouseClick", NULL, envir = manipulator)
+}
+
 resolveVariableArguments <- function(args)
 {
   # if the first argument is an unnamed list then just use this list

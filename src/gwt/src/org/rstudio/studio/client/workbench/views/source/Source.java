@@ -15,6 +15,8 @@ package org.rstudio.studio.client.workbench.views.source;
 import com.google.gwt.core.client.JsArray;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
+import com.google.gwt.event.dom.client.ChangeEvent;
+import com.google.gwt.event.dom.client.ChangeHandler;
 import com.google.gwt.event.logical.shared.*;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.resources.client.ImageResource;
@@ -26,6 +28,7 @@ import com.google.inject.Provider;
 import org.rstudio.core.client.*;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.command.Handler;
+import org.rstudio.core.client.command.KeyboardShortcut;
 import org.rstudio.core.client.events.*;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.JsObject;
@@ -59,6 +62,7 @@ import org.rstudio.studio.client.workbench.views.data.events.ViewDataEvent;
 import org.rstudio.studio.client.workbench.views.data.events.ViewDataHandler;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTarget;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTargetSource;
+import org.rstudio.studio.client.workbench.views.source.editors.codebrowser.CodeBrowserEditingTarget;
 import org.rstudio.studio.client.workbench.views.source.editors.data.DataEditingTarget;
 import org.rstudio.studio.client.workbench.views.source.editors.text.TextEditingTarget;
 import org.rstudio.studio.client.workbench.views.source.editors.text.events.FileTypeChangedEvent;
@@ -67,6 +71,9 @@ import org.rstudio.studio.client.workbench.views.source.events.*;
 import org.rstudio.studio.client.workbench.views.source.model.ContentItem;
 import org.rstudio.studio.client.workbench.views.source.model.DataItem;
 import org.rstudio.studio.client.workbench.views.source.model.SourceDocument;
+import org.rstudio.studio.client.workbench.views.source.model.SourceNavigation;
+import org.rstudio.studio.client.workbench.views.source.model.SourceNavigationHistory;
+import org.rstudio.studio.client.workbench.views.source.model.SourcePosition;
 import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
 
 import java.util.ArrayList;
@@ -81,6 +88,7 @@ public class Source implements InsertSourceHandler,
                              FileEditHandler,
                              ShowContentHandler,
                              ShowDataHandler,
+                             CodeBrowserNavigationHandler,
                              BeforeShowHandler
 {
    public interface Display extends IsWidget,
@@ -138,7 +146,7 @@ public class Source implements InsertSourceHandler,
                  EventBus events,
                  Session session,
                  WorkbenchContext workbenchContext,
-                 FileMRUList mruList,
+                 Provider<FileMRUList> pMruList,
                  UIPrefs uiPrefs)
    {
       commands_ = commands;
@@ -151,7 +159,7 @@ public class Source implements InsertSourceHandler,
       fileContext_ = fileContext;
       events_ = events;
       workbenchContext_ = workbenchContext;
-      mruList_ = mruList;
+      pMruList_ = pMruList;
       uiPrefs_ = uiPrefs;
 
       view_.addTabClosingHandler(this);
@@ -172,20 +180,31 @@ public class Source implements InsertSourceHandler,
       dynamicCommands_.add(commands.executeCurrentFunction());
       dynamicCommands_.add(commands.executeLastCode());
       dynamicCommands_.add(commands.sourceActiveDocument());
+      dynamicCommands_.add(commands.sourceActiveDocumentWithEcho());
       dynamicCommands_.add(commands.compilePDF());
       dynamicCommands_.add(commands.publishPDF());
       dynamicCommands_.add(commands.popoutDoc());
       dynamicCommands_.add(commands.findReplace());
       dynamicCommands_.add(commands.extractFunction());
       dynamicCommands_.add(commands.commentUncomment());
+      dynamicCommands_.add(commands.reindent());
       dynamicCommands_.add(commands.jumpToFunction());
+      dynamicCommands_.add(commands.goToFunctionDefinition());
       dynamicCommands_.add(commands.setWorkingDirToActiveDoc());
+      dynamicCommands_.add(commands.goToLine());
       for (AppCommand command : dynamicCommands_)
       {
          command.setVisible(false);
          command.setEnabled(false);
       }
       
+      // fake shortcuts for commands which we handle at a lower level
+      int mod = BrowseCap.hasMetaKey() ? KeyboardShortcut.META : 
+                                         KeyboardShortcut.CTRL;
+      commands.findReplace().setShortcut(new KeyboardShortcut(mod, 'F'));
+      commands.goToFunctionDefinition().setShortcut(new KeyboardShortcut(113));
+      
+             
       // allow Ctrl+W to propagate to the browser if close doc is disabled
       if (!Desktop.isDesktop())
       {
@@ -211,6 +230,8 @@ public class Source implements InsertSourceHandler,
                   });
          }
       });
+      
+      events.addHandler(CodeBrowserNavigationEvent.TYPE, this);
 
       events.addHandler(FileTypeChangedEvent.TYPE, new FileTypeChangedHandler()
       {
@@ -233,7 +254,29 @@ public class Source implements InsertSourceHandler,
       {
          public void onSourceFileSaved(SourceFileSavedEvent event)
          {
-            mruList_.add(event.getPath());
+            pMruList_.get().add(event.getPath());
+         }
+      });
+            
+      events.addHandler(SourceNavigationEvent.TYPE, 
+                        new SourceNavigationHandler() {
+         @Override
+         public void onSourceNavigation(SourceNavigationEvent event)
+         {
+            if (!suspendSourceNavigationAdding_)
+            {
+               sourceNavigationHistory_.add(event.getNavigation());
+            }
+         }
+      });
+      
+      sourceNavigationHistory_.addChangeHandler(new ChangeHandler()
+      {
+
+         @Override
+         public void onChange(ChangeEvent event)
+         {
+            manageSourceNavigationCommands();
          }
       });
 
@@ -254,6 +297,9 @@ public class Source implements InsertSourceHandler,
             {
                editors_.get(view_.getActiveTabIndex()).onInitiallyLoaded();
             }
+
+            // clear the history manager
+            sourceNavigationHistory_.clear();
          }
 
          @Override
@@ -325,7 +371,6 @@ public class Source implements InsertSourceHandler,
 
    public void onShowData(ShowDataEvent event)
    {
-      ensureVisible(true);
       DataItem data = event.getData();
 
       for (int i = 0; i < editors_.size(); i++)
@@ -335,11 +380,13 @@ public class Source implements InsertSourceHandler,
          {
             ((DataEditingTarget)editors_.get(i)).updateData(data);
 
+            ensureVisible(false);
             view_.selectTab(i);
             return;
          }
       }
 
+      ensureVisible(true);
       server_.newDocument(
             FileTypeRegistry.DATAFRAME.getTypeId(),
             (JsObject) data.cast(),
@@ -361,7 +408,7 @@ public class Source implements InsertSourceHandler,
    }
 
    private void newDoc(EditableFileType fileType,
-                       final CommandWithArg<EditingTarget> executeOnSuccess)
+                       final ResultCallback<EditingTarget, ServerError> resultCallback)
    {
       ensureVisible(true);
       server_.newDocument(
@@ -374,8 +421,15 @@ public class Source implements InsertSourceHandler,
                public void onResponseReceived(SourceDocument newDoc)
                {
                   EditingTarget target = addTab(newDoc);
-                  if (executeOnSuccess != null)
-                     executeOnSuccess.execute(target);
+                  if (resultCallback != null)
+                     resultCallback.onSuccess(target);
+               }
+
+               @Override
+               public void onError(ServerError error)
+               {
+                  if (resultCallback != null)
+                     resultCallback.onFailure(error);
                }
             });
    }
@@ -747,25 +801,97 @@ public class Source implements InsertSourceHandler,
    }
    
    public void onOpenSourceFile(final OpenSourceFileEvent event)
-   {
-      openFile(event.getFile(), 
-               event.getFileType(), 
-               new CommandWithArg<EditingTarget>() {
-
+   { 
+      final CommandWithArg<FileSystemItem> action = new CommandWithArg<FileSystemItem>()
+      {
          @Override
-         public void execute(EditingTarget target)
+         public void execute(FileSystemItem file)
          {
-            FilePosition position = event.getPosition();
-            if (position != null)
-            {
-               target.jumpToPosition(position);
-               target.focus();
-            }
+            openFile(file,
+                     event.getFileType(),
+                     new CommandWithArg<EditingTarget>() {
+
+               @Override
+               public void execute(final EditingTarget target)
+               {
+                  final FilePosition position = event.getPosition();
+                  if (position != null)
+                  {
+                     Scheduler.get().scheduleDeferred(new ScheduledCommand()
+                     {
+                        @Override
+                        public void execute()
+                        {
+                           // now navigate to the new position
+                           target.navigateToPosition(
+                                 SourcePosition.create(position.getLine() - 1,
+                                                       position.getColumn() - 1),
+                                 false);
+                        }
+                     });
+                  }
+               }
+
+            });
          }
-         
-      });
+      };
+
+      // Warning: event.getFile() can be null (e.g. new Sweave document)
+      if (event.getFile() != null && event.getFile().getLength() < 0)
+      {
+         // If the file has no size info, stat the file from the server. This
+         // is to prevent us from opening large files accidentally.
+
+         server_.stat(event.getFile().getPath(), new ServerRequestCallback<FileSystemItem>()
+         {
+            @Override
+            public void onResponseReceived(FileSystemItem response)
+            {
+               action.execute(response);
+            }
+
+            @Override
+            public void onError(ServerError error)
+            {
+               // Couldn't stat the file? Proceed anyway. If the file doesn't
+               // exist, we'll let the downstream code be the one to show the
+               // error.
+               action.execute(event.getFile());
+            }
+         });
+      }
+      else
+      {
+         action.execute(event.getFile());
+      }
    }
    
+
+   private void openFile(final FileSystemItem file,
+                         final TextFileType fileType,
+                         final CommandWithArg<EditingTarget> executeOnSuccess)
+   {
+      openFile(file,
+            fileType,
+            new ResultCallback<EditingTarget, ServerError>() {
+               @Override
+               public void onSuccess(EditingTarget target)
+               {
+                  if (executeOnSuccess != null)
+                     executeOnSuccess.execute(target);
+               }
+
+               @Override
+               public void onFailure(ServerError error)
+               {
+                  globalDisplay_.showMessage(GlobalDisplay.MSG_ERROR,
+                                             "Error while opening file",
+                                             error.getUserMessage());
+                 
+               }
+            });  
+   }
+
    // top-level wrapper for opening files. takes care of:
    //  - making sure the view is visible
    //  - checking whether it is already open and re-selecting its tab
@@ -775,16 +901,15 @@ public class Source implements InsertSourceHandler,
    //    via the call to the lower level openFile method
    private void openFile(final FileSystemItem file,
                          final TextFileType fileType,
-                         final CommandWithArg<EditingTarget> executeOnSuccess)
+                         final ResultCallback<EditingTarget, ServerError> resultCallback)
    {
       ensureVisible(true);
 
       if (file == null)
       {
-         newDoc(fileType, null);
+         newDoc(fileType, resultCallback);
          return;
       }
-
 
       for (int i = 0; i < editors_.size(); i++)
       {
@@ -794,8 +919,9 @@ public class Source implements InsertSourceHandler,
              && thisPath.equalsIgnoreCase(file.getPath()))
          {
             view_.selectTab(i);
-            mruList_.add(thisPath);
-            executeOnSuccess.execute(target);
+            pMruList_.get().add(thisPath);
+            if (resultCallback != null)
+               resultCallback.onSuccess(target);
             return;
          }
       }
@@ -804,23 +930,32 @@ public class Source implements InsertSourceHandler,
 
       if (file.getLength() > target.getFileSizeLimit())
       {
+         if (resultCallback != null)
+            resultCallback.onCancelled();
          showFileTooLargeWarning(file, target.getFileSizeLimit());
       }
       else if (file.getLength() > target.getLargeFileSize())
       {
-         confirmOpenLargeFile(file,  new Operation() {
+         confirmOpenLargeFile(file, new Operation() {
             public void execute()
             {
-               openFileFromServer(file, fileType, executeOnSuccess);
+               openFileFromServer(file, fileType, resultCallback);
+            }
+         }, new Operation() {
+            public void execute()
+            {
+               // user (wisely) cancelled
+               if (resultCallback != null)
+                  resultCallback.onCancelled();
             }
          });
       }
       else
       {
-         openFileFromServer(file, fileType, executeOnSuccess);
+         openFileFromServer(file, fileType, resultCallback);
       }
    }
-
+  
    private void showFileTooLargeWarning(FileSystemItem file,
                                         long sizeLimit)
    {
@@ -837,7 +972,8 @@ public class Source implements InsertSourceHandler,
    }
 
    private void confirmOpenLargeFile(FileSystemItem file,
-                                     Operation openOperation)
+                                     Operation openOperation,
+                                     Operation cancelOperation)
    {
       StringBuilder msg = new StringBuilder();
       msg.append("The source file '" + file.getName() + "' is large (");
@@ -854,7 +990,7 @@ public class Source implements InsertSourceHandler,
    private void openFileFromServer(
          final FileSystemItem file,
          final TextFileType fileType,
-         final CommandWithArg<EditingTarget> executeOnSuccess)
+         final ResultCallback<EditingTarget, ServerError> resultCallback)
    {
       final Command dismissProgress = globalDisplay_.showProgress(
                                                          "Opening file...");
@@ -870,18 +1006,18 @@ public class Source implements InsertSourceHandler,
                {
                   dismissProgress.execute();
                   Debug.logError(error);
-                  globalDisplay_.showMessage(GlobalDisplay.MSG_ERROR,
-                                             "Error while opening file",
-                                             error.getUserMessage());
+                  if (resultCallback != null)
+                     resultCallback.onFailure(error);
                }
 
                @Override
                public void onResponseReceived(SourceDocument document)
                {
                   dismissProgress.execute();
-                  mruList_.add(document.getPath());
+                  pMruList_.get().add(document.getPath());
                   EditingTarget target = addTab(document);
-                  executeOnSuccess.execute(target);
+                  if (resultCallback != null)
+                     resultCallback.onSuccess(target);
                }
             });
    }
@@ -980,9 +1116,9 @@ public class Source implements InsertSourceHandler,
       else
       {
          newDoc(FileTypeRegistry.R,
-                new CommandWithArg<EditingTarget>()
+                new ResultCallback<EditingTarget, ServerError>()
          {
-            public void execute(EditingTarget arg)
+            public void onSuccess(EditingTarget arg)
             {
                ((TextEditingTarget)arg).insertCode(event.getCode(),
                                                    event.isBlock());
@@ -1015,6 +1151,7 @@ public class Source implements InsertSourceHandler,
 
       if (view_.getTabCount() == 0)
       {
+         sourceNavigationHistory_.clear();
          events_.fireEvent(new LastSourceDocClosedEvent());
       }
    }
@@ -1087,7 +1224,7 @@ public class Source implements InsertSourceHandler,
       HashSet<AppCommand> newCommands =
             activeEditor_ != null ? activeEditor_.getSupportedCommands()
                                   : new HashSet<AppCommand>();
-
+            
       HashSet<AppCommand> commandsToEnable = new HashSet<AppCommand>(newCommands);
       commandsToEnable.removeAll(activeCommands_);
 
@@ -1106,7 +1243,7 @@ public class Source implements InsertSourceHandler,
          command.setVisible(false);
       }
       
-  
+      
       // commands which should always be visible even when disabled
       commands_.saveSourceDoc().setVisible(true);
       commands_.saveSourceDocAs().setVisible(true);
@@ -1118,7 +1255,10 @@ public class Source implements InsertSourceHandler,
                             activeEditor_.dirtyState().getValue() == true;
       commands_.saveSourceDoc().setEnabled(saveEnabled);
       manageSaveAllCommand();
-
+      
+      // manage source navigation
+      manageSourceNavigationCommands();
+      
       activeCommands_ = newCommands;
 
       assert verifyNoUnsupportedCommands(newCommands)
@@ -1140,7 +1280,8 @@ public class Source implements InsertSourceHandler,
       // not one was dirty, disabled
       commands_.saveAllSourceDocs().setEnabled(false);
    }
-
+   
+  
    private boolean verifyNoUnsupportedCommands(HashSet<AppCommand> commands)
    {
       HashSet<AppCommand> temp = new HashSet<AppCommand>(commands);
@@ -1163,6 +1304,209 @@ public class Source implements InsertSourceHandler,
          onNewSourceDoc();
       }
    }
+      
+   @Handler
+   public void onSourceNavigateBack()
+   {
+      if (!sourceNavigationHistory_.isForwardEnabled())
+      {
+         if (activeEditor_ != null)
+            activeEditor_.recordCurrentNavigationPosition();
+      }
+
+      SourceNavigation navigation = sourceNavigationHistory_.goBack();
+      if (navigation != null)
+         attemptSourceNavigation(navigation, commands_.sourceNavigateBack());
+   }
+   
+   @Handler
+   public void onSourceNavigateForward()
+   {
+      SourceNavigation navigation = sourceNavigationHistory_.goForward();
+      if (navigation != null)
+         attemptSourceNavigation(navigation, commands_.sourceNavigateForward());
+   }
+   
+   private void attemptSourceNavigation(final SourceNavigation navigation,
+                                        final AppCommand retryCommand)
+   {
+      // see if we can navigate by id
+      String docId = navigation.getDocumentId();
+      final EditingTarget target = getEditingTargetForId(docId);
+      if (target != null)
+      {
+         // check for navigation to the current position -- in this
+         // case execute the retry command
+         if ( (target == activeEditor_) && 
+               target.isAtSourceRow(navigation.getPosition()))
+         {
+            if (retryCommand.isEnabled())
+               retryCommand.execute();
+         }
+         else
+         {
+            suspendSourceNavigationAdding_ = true;
+            try
+            {
+               view_.selectTab(target.asWidget());
+               target.restorePosition(navigation.getPosition());
+            }
+            finally
+            {
+               suspendSourceNavigationAdding_ = false;
+            }
+         }
+      }
+      
+      // check for code browser navigation
+      else if ((navigation.getPath() != null) &&
+               navigation.getPath().equals(CodeBrowserEditingTarget.PATH))
+      {
+         activateCodeBrowser(
+            new SourceNavigationResultCallback<CodeBrowserEditingTarget>(
+                                                      navigation.getPosition(),
+                                                      retryCommand));
+      }
+      
+      // check for file path navigation
+      else if ((navigation.getPath() != null) && 
+               !navigation.getPath().startsWith(DataItem.URI_PREFIX))
+      {
+         FileSystemItem file = FileSystemItem.createFile(navigation.getPath());
+         TextFileType fileType = fileTypeRegistry_.getTextTypeForFile(file);
+         
+         // open the file and restore the position
+         openFile(file,
+                  fileType,
+                  new SourceNavigationResultCallback<EditingTarget>(
+                                                   navigation.getPosition(),
+                                                   retryCommand));
+      } 
+      else
+      {
+         // couldn't navigate to this item, retry
+         if (retryCommand.isEnabled())
+            retryCommand.execute();
+      }
+   }
+   
+   private void manageSourceNavigationCommands()
+   {   
+      commands_.sourceNavigateBack().setEnabled(
+            sourceNavigationHistory_.isBackEnabled());
+
+      commands_.sourceNavigateForward().setEnabled(
+            sourceNavigationHistory_.isForwardEnabled());  
+   }
+   
+    
+   @Override
+   public void onCodeBrowserNavigation(final CodeBrowserNavigationEvent event)
+   {
+      activateCodeBrowser(new ResultCallback<CodeBrowserEditingTarget,ServerError>() {
+         @Override
+         public void onSuccess(CodeBrowserEditingTarget target)
+         {
+            target.showFunction(event.getFunction());
+         }
+      });
+   }
+     
+   private void activateCodeBrowser(
+         final ResultCallback<CodeBrowserEditingTarget,ServerError> callback)
+   {
+      // see if there is an existing target to use
+      for (int i = 0; i < editors_.size(); i++)
+      {
+         String path = editors_.get(i).getPath();
+         if (CodeBrowserEditingTarget.PATH.equals(path))
+         {
+            // select it
+            ensureVisible(false);
+            view_.selectTab(i);
+            
+            // callback
+            callback.onSuccess( (CodeBrowserEditingTarget)editors_.get(i));
+            
+            // satisfied request
+            return;
+         }
+      }
+
+      // create a new one
+      newDoc(FileTypeRegistry.CODEBROWSER,
+             new ResultCallback<EditingTarget, ServerError>()
+             {
+               @Override
+               public void onSuccess(EditingTarget arg)
+               {
+                  callback.onSuccess( (CodeBrowserEditingTarget)arg);
+               }
+               
+               @Override
+               public void onFailure(ServerError error)
+               {
+                  callback.onFailure(error);
+               }
+               
+               @Override
+               public void onCancelled()
+               {
+                  callback.onCancelled();
+               }
+               
+            });
+   }
+   
+   
+   private class SourceNavigationResultCallback<T extends EditingTarget> 
+                        extends ResultCallback<T,ServerError>
+   {
+      public SourceNavigationResultCallback(SourcePosition restorePosition,
+                                            AppCommand retryCommand)
+      {
+         suspendSourceNavigationAdding_ = true;
+         restorePosition_ = restorePosition;
+         retryCommand_ = retryCommand;
+      }
+      
+      @Override
+      public void onSuccess(final T target)
+      {
+         Scheduler.get().scheduleDeferred(new ScheduledCommand()
+         {
+            @Override
+            public void execute()
+            {
+               try
+               {
+                  target.restorePosition(restorePosition_);
+               }
+               finally
+               {
+                  suspendSourceNavigationAdding_ = false;
+               }
+            }
+         });
+      }
+
+      @Override
+      public void onFailure(ServerError info)
+      {
+         suspendSourceNavigationAdding_ = false;
+         if (retryCommand_.isEnabled())
+            retryCommand_.execute();
+      }
+      
+      @Override
+      public void onCancelled()
+      {
+         suspendSourceNavigationAdding_ = false;
+      }
+      
+      private final SourcePosition restorePosition_;
+      private final AppCommand retryCommand_;
+   }
 
    ArrayList<EditingTarget> editors_ = new ArrayList<EditingTarget>();
    private EditingTarget activeEditor_;
@@ -1176,11 +1520,15 @@ public class Source implements InsertSourceHandler,
    private final FileDialogs fileDialogs_;
    private final RemoteFileSystemContext fileContext_;
    private final EventBus events_;
-   private final FileMRUList mruList_;
+   private final Provider<FileMRUList> pMruList_;
    private final UIPrefs uiPrefs_;
    private HashSet<AppCommand> activeCommands_ = new HashSet<AppCommand>();
    private final HashSet<AppCommand> dynamicCommands_;
+   private final SourceNavigationHistory sourceNavigationHistory_ = 
+                                              new SourceNavigationHistory(30);
 
+   private boolean suspendSourceNavigationAdding_;
+  
    private static final String MODULE_SOURCE = "source-pane";
    private static final String KEY_ACTIVETAB = "activeTab";
    private boolean initialized_;

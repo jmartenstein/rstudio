@@ -75,24 +75,31 @@ well as menu structures (for main menu and popup menus).
          <separator/>
          <cmd refid="findReplace"/>
          <separator/>
+         <cmd refid="sourceNavigateBack"/>
+         <cmd refid="sourceNavigateForward"/>
+         <separator/>
+         <cmd refid="goToFunctionDefinition"/>
+         <cmd refid="jumpToFunction"/>
+         <separator/>
+         <cmd refid="extractFunction"/>
+         <cmd refid="commentUncomment"/>
+         <cmd refid="reindent"/>
+         <separator/>
+         <cmd refid="complete"/>
+         <separator/>
          <menu label="Run Code">
-	         <cmd refid="executeCode"/>
-	         <cmd refid="executeAllCode"/>
-	         <cmd refid="executeToCurrentLine"/>
-	         <cmd refid="executeFromCurrentLine"/>
-	         <cmd refid="executeCurrentFunction"/>
-	         <separator/>
-	         <cmd refid="executeLastCode"/>
+            <cmd refid="executeCode"/>
+            <cmd refid="executeAllCode"/>
+            <cmd refid="executeToCurrentLine"/>
+            <cmd refid="executeFromCurrentLine"/>
+            <cmd refid="executeCurrentFunction"/>
+            <separator/>
+            <cmd refid="executeLastCode"/>
          </menu>
          <separator/>
          <cmd refid="sourceActiveDocument"/>
          <cmd refid="sourceActiveDocumentWithEcho"/>
          <cmd refid="sourceFile"/>
-         <separator/>
-         <cmd refid="jumpToFunction"/>
-         <separator/>
-         <cmd refid="extractFunction"/>
-         <cmd refid="commentUncomment"/>
          <separator/>
          <cmd refid="consoleClear"/>
       </menu>
@@ -103,7 +110,7 @@ well as menu structures (for main menu and popup menus).
          <cmd refid="showToolbar"/>
          <cmd refid="hideToolbar"/>
          <separator/>
-         <cmd refid="goToFunctionFile"/>
+         <cmd refid="goToFileFunction"/>
          <separator/>
          <cmd refid="switchToTab"/>
          <cmd refid="nextTab"/>
@@ -233,7 +240,18 @@ well as menu structures (for main menu and popup menus).
    </menu>
 
    <shortcuts>
-      <!-- Only alphanumeric values may be used -->
+      <!--
+         Only the following keys may be used:
+            Alphanumerics
+            /
+            Enter
+            Left, Right, Up, Down
+            Tab
+            PageUp, PageDown
+            F1-F12
+            `
+            .
+      -->
       <!-- Valid modifiers are Ctrl, Alt, Meta, Shift, and Cmd -->
       <!-- "Cmd" means Ctrl OR Meta -->
       <shortcut refid="saveSourceDoc" value="Cmd+S"/>
@@ -247,14 +265,17 @@ well as menu structures (for main menu and popup menus).
       <shortcut refid="executeToCurrentLine" value="Cmd+Shift+B"/>
       <shortcut refid="executeFromCurrentLine" value="Cmd+Shift+E"/>
       <shortcut refid="executeCurrentFunction" value="Cmd+Shift+F"/>
+      <shortcut refid="sourceNavigateBack" value="Cmd+F9"/>
+      <shortcut refid="sourceNavigateForward" value="Cmd+F10"/>
       <shortcut refid="sourceFile" value="Cmd+Shift+O"/>
       <shortcut refid="sourceActiveDocument" value="Cmd+Shift+S"/>
       <shortcut refid="sourceActiveDocumentWithEcho" value="Cmd+Shift+Enter"/>;
       <shortcut refid="extractFunction" value="Cmd+Shift+U"/>
       <shortcut refid="executeLastCode" value="Cmd+Shift+P"/>
       <shortcut refid="commentUncomment" value="Cmd+/"/>
+      <shortcut refid="reindent" value="Cmd+I"/>
       <shortcut refid="consoleClear" value="Ctrl+L"/>
-      <shortcut refid="goToFunctionFile" value="Cmd+."/>
+      <shortcut refid="goToFileFunction" value="Cmd+."/>
       <shortcut refid="activateSource" value="Ctrl+1"/>
       <shortcut refid="activateConsole" value="Ctrl+2"/>
       <shortcut refid="activateWorkspace" value="Ctrl+3"/>
@@ -271,6 +292,7 @@ well as menu structures (for main menu and popup menus).
       <shortcut refid="nextTab" value="Ctrl+PageDown" if="org.rstudio.core.client.BrowseCap.isLinux()"/>
       <shortcut refid="firstTab" value="Ctrl+Alt+Shift+Left"/>
       <shortcut refid="lastTab" value="Ctrl+Alt+Shift+Right"/>
+      <shortcut refid="goToLine" value="Cmd+G"/>
       <shortcut refid="previousPlot" value="Cmd+Shift+PageUp" />
       <shortcut refid="nextPlot" value="Cmd+Shift+PageDown" />
       <shortcut refid="showManipulator" value="Cmd+Shift+M"/>
@@ -400,8 +422,8 @@ well as menu structures (for main menu and popup menus).
         menuLabel="Show Toolbar"/>
    <cmd id="hideToolbar"
         menuLabel="Hide Toolbar"/>
-   <cmd id="goToFunctionFile"
-        menuLabel="Go to Function/File..."/>   
+   <cmd id="goToFileFunction"
+        menuLabel="Go to File/Function..."/>   
    <cmd id="activateSource"
         menuLabel="Move Cursor to _Source"/>
    <cmd id="activateConsole"
@@ -432,9 +454,13 @@ well as menu structures (for main menu and popup menus).
         menuLabel="_First Tab"/>
    <cmd id="lastTab"
         menuLabel="_Last Tab"/>
+   <cmd id="goToLine"
+        menuLabel="Jump to Line..."/>
 
    <cmd id="findReplace"
         menuLabel="_Find and Replace..."/>
+   <cmd id="complete"
+        menuLabel="Code Completion"/>
    <cmd id="executeAllCode"
         buttonLabel=""
         menuLabel="Run _All"
@@ -455,6 +481,15 @@ well as menu structures (for main menu and popup menus).
    <cmd id="executeLastCode"
         menuLabel="Re-Run _Previous Region"
         desc="Re-run the previous code region"/>
+   <cmd id ="goToFunctionDefinition"
+        menuLabel="_Go To Function Definition"
+        desc="Go to to the definition of the currently highlighted function"/>
+   <cmd id = "sourceNavigateBack"
+        menuLabel="Bac_k"
+        desc="Go back to the previous source location"/>
+    <cmd id = "sourceNavigateForward"
+        menuLabel="For_ward"
+        desc="Go forward to the next source location"/>
    <cmd id="extractFunction"
         menuLabel="E_xtract Function"
         desc="Turn the current selection into a function"/>
@@ -473,6 +508,9 @@ well as menu structures (for main menu and popup menus).
    <cmd id="commentUncomment"
         menuLabel="C_omment/Uncomment Lines"
         desc="Comment or uncomment the current line/selection"/>
+   <cmd id="reindent"
+        menuLabel="_Reindent Lines"
+        desc="Reindent the current line/selection"/>
 
    <cmd id="compilePDF"
         buttonLabel="Compile PDF"
@@ -561,7 +599,7 @@ well as menu structures (for main menu and popup menus).
         menuLabel="Push..."/>
 
    <cmd id="consoleClear"
-        menuLabel="C_lear Console"/>
+        menuLabel="Clear Con_sole"/>
    <cmd id="interruptR"
         menuLabel="_Interrupt R"/>
 

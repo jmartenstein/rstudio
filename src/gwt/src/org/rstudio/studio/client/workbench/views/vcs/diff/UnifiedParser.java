@@ -12,7 +12,6 @@
  */
 package org.rstudio.studio.client.workbench.views.vcs.diff;
 
-import org.rstudio.core.client.Pair;
 import org.rstudio.core.client.regex.Match;
 import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.studio.client.workbench.views.vcs.diff.Line.Type;
@@ -21,17 +20,26 @@ import java.util.ArrayList;
 
 public class UnifiedParser
 {
-
    public UnifiedParser(String data)
    {
       data_ = data;
+      diffIndex_ = 0;
    }
 
-   public Pair<String, String> nextFilePair()
+   public DiffFileHeader nextFilePair()
    {
+      ArrayList<String> headerLines = new ArrayList<String>();
+
+      boolean inDiff = false;
+
       String line;
       while (null != (line = nextLine()) && !line.startsWith("--- "))
       {
+         if (line.startsWith("diff "))
+            inDiff = true;
+
+         if (inDiff)
+            headerLines.add(line);
       }
 
       if (line == null)
@@ -42,7 +50,7 @@ public class UnifiedParser
       if (line == null || !line.startsWith("+++ "))
          throw new DiffFormatException("Incomplete file header");
       String fileB = line.substring(4);
-      return new Pair<String, String>(fileA, fileB);
+      return new DiffFileHeader(headerLines, fileA, fileB);
    }
 
    public DiffChunk nextChunk()
@@ -63,9 +71,9 @@ public class UnifiedParser
          throw new DiffFormatException("Malformed chunk header");
 
       final int oldRowStart = Integer.parseInt(match.getGroup(1));
-      final int oldCount = Integer.parseInt(match.getGroup(2));
+      final int oldCount = match.hasGroup(2) ? Integer.parseInt(match.getGroup(2)) : 1;
       final int newRowStart = Integer.parseInt(match.getGroup(3));
-      final int newCount = Integer.parseInt(match.getGroup(4));
+      final int newCount = match.hasGroup(4) ? Integer.parseInt(match.getGroup(4)) : 1;
       final String text = match.getGroup(6);
 
       int oldRow = oldRowStart;
@@ -74,7 +82,9 @@ public class UnifiedParser
       int newRowsLeft = newCount;
 
       ArrayList<Line> lines = new ArrayList<Line>();
-      while (oldRowsLeft > 0 || newRowsLeft > 0)
+      for (;
+           oldRowsLeft > 0 || newRowsLeft > 0 || nextLineIsComment();
+           diffIndex_++)
       {
          String diffLine = nextLine();
          if (diffLine == null)
@@ -89,24 +99,32 @@ public class UnifiedParser
                lines.add(new Line(Type.Same,
                                   oldRow++,
                                   newRow++,
-                                  diffLine.substring(1)));
+                                  diffLine.substring(1),
+                                  diffIndex_));
                break;
             case '-':
                oldRowsLeft--;
                lines.add(new Line(Type.Deletion,
                                   oldRow++,
                                   newRow-1,
-                                  diffLine.substring(1)));
+                                  diffLine.substring(1),
+                                  diffIndex_));
                break;
             case '+':
                newRowsLeft--;
                lines.add(new Line(Type.Insertion,
                                   oldRow-1,
                                   newRow++,
-                                  diffLine.substring(1)));
+                                  diffLine.substring(1),
+                                  diffIndex_));
                break;
             case '\\':
                // e.g. "\\ No newline at end of file"
+               lines.add(new Line(Type.Comment,
+                                  oldRow-1,
+                                  newRow-1,
+                                  diffLine.substring(1),
+                                  diffIndex_));
                break;
             default:
                throw new DiffFormatException("Unexpected leading character");
@@ -125,6 +143,11 @@ public class UnifiedParser
       return pos_ >= data_.length();
    }
 
+   private boolean nextLineIsComment()
+   {
+      return !isEOL() && data_.charAt(pos_) == '\\';
+   }
+
    private String nextLine()
    {
       if (isEOL())
@@ -133,8 +156,9 @@ public class UnifiedParser
       Match match = newline_.match(data_, pos_);
       if (match == null)
       {
+         int pos = pos_;
          pos_ = data_.length();
-         return data_.substring(pos_);
+         return data_.substring(pos);
       }
       else
       {
@@ -147,5 +171,6 @@ public class UnifiedParser
    private final String data_;
    private int pos_;
    private final Pattern newline_ = Pattern.create("\\r?\\n");
-   private final Pattern range_ = Pattern.create("^@@\\s*-([\\d]+),([\\d]+)\\s+\\+([\\d]+),([\\d]+)\\s*@@( (.*))?$", "m");
+   private final Pattern range_ = Pattern.create("^@@\\s*-([\\d]+)(?:,([\\d]+))?\\s+\\+([\\d]+)(?:,([\\d]+))?\\s*@@( (.*))?$", "m");
+   private int diffIndex_;
 }

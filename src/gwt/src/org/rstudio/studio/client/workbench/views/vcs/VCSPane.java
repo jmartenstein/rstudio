@@ -12,7 +12,9 @@
  */
 package org.rstudio.studio.client.workbench.views.vcs;
 
+import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.user.client.ui.Widget;
+import com.google.gwt.view.client.SelectionChangeEvent.Handler;
 import com.google.inject.Inject;
 import org.rstudio.core.client.widget.Toolbar;
 import org.rstudio.core.client.widget.ToolbarButton;
@@ -33,13 +35,14 @@ public class VCSPane extends WorkbenchPane implements Display
    public VCSPane(ConsoleBarFramePanel consoleBarFrame,
                   ChangelistTablePresenter changelistTablePresenter,
                   Session session,
-                  Commands commands)
+                  Commands commands,
+                  BranchToolbarButton branchToolbarButton)
    {
       super(session.getSessionInfo().getVcsName());
       consoleBarFrame_ = consoleBarFrame;
       commands_ = commands;
+      branchToolbarButton_ = branchToolbarButton;
 
-      changelistTablePresenter.initializeClientState();
       table_ = changelistTablePresenter.getView();
       consoleBarFrame_.setWidget(table_);
    }
@@ -48,8 +51,8 @@ public class VCSPane extends WorkbenchPane implements Display
    protected Toolbar createMainToolbar()
    {
       ToolbarPopupMenu moreMenu = new ToolbarPopupMenu();
-      moreMenu.addItem(commands_.vcsIgnore().createMenuItem(false));
-      moreMenu.addSeparator();
+//      moreMenu.addItem(commands_.vcsIgnore().createMenuItem(false));
+//      moreMenu.addSeparator();
       moreMenu.addItem(commands_.vcsPull().createMenuItem(false));
       moreMenu.addItem(commands_.vcsPush().createMenuItem(false));
       moreMenu.addSeparator();
@@ -67,6 +70,7 @@ public class VCSPane extends WorkbenchPane implements Display
             StandardIcons.INSTANCE.more_actions(),
             moreMenu));
 
+      toolbar.addRightWidget(branchToolbarButton_);
       toolbar.addRightWidget(commands_.vcsRefresh().createToolbarButton());
       return toolbar;
    }
@@ -89,7 +93,38 @@ public class VCSPane extends WorkbenchPane implements Display
       return table_.getSelectedPaths();
    }
 
+   @Override
+   public ArrayList<StatusAndPath> getSelectedItems()
+   {
+      return table_.getSelectedItems();
+   }
+
+   @Override
+   public int getSelectedItemCount()
+   {
+      return table_.getSelectedItems().size();
+   }
+
+   @Override
+   public void onRefreshBegin()
+   {
+      table_.showProgress();
+   }
+
+   @Override
+   public HandlerRegistration addSelectionChangeHandler(Handler handler)
+   {
+      return table_.addSelectionChangeHandler(handler);
+   }
+
+   @Override
+   public ChangelistTable getChangelistTable()
+   {
+      return table_;
+   }
+
    private final Commands commands_;
+   private final BranchToolbarButton branchToolbarButton_;
    private ChangelistTable table_;
    private ConsoleBarFramePanel consoleBarFrame_;
 }

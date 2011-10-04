@@ -29,17 +29,15 @@ import org.rstudio.core.client.jsonrpc.RpcResponse;
 import org.rstudio.studio.client.application.events.*;
 import org.rstudio.studio.client.application.model.SaveAction;
 import org.rstudio.studio.client.application.model.SessionSerializationAction;
+import org.rstudio.studio.client.common.console.ServerConsoleOutputEvent;
+import org.rstudio.studio.client.common.console.ServerProcessExitEvent;
 import org.rstudio.studio.client.projects.events.OpenProjectErrorEvent;
 import org.rstudio.studio.client.projects.model.OpenProjectError;
 import org.rstudio.studio.client.server.Bool;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.events.*;
-import org.rstudio.studio.client.workbench.model.BrowseUrlInfo;
-import org.rstudio.studio.client.workbench.model.ErrorMessage;
-import org.rstudio.studio.client.workbench.model.OAuthApproval;
-import org.rstudio.studio.client.workbench.model.QuotaStatus;
-import org.rstudio.studio.client.workbench.model.WarningBarMessage;
+import org.rstudio.studio.client.workbench.model.*;
 import org.rstudio.studio.client.workbench.views.choosefile.events.ChooseFileEvent;
 import org.rstudio.studio.client.workbench.views.console.events.*;
 import org.rstudio.studio.client.workbench.views.console.model.ConsolePrompt;
@@ -64,7 +62,9 @@ import org.rstudio.studio.client.workbench.views.source.events.ShowContentEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowDataEvent;
 import org.rstudio.studio.client.workbench.views.source.model.ContentItem;
 import org.rstudio.studio.client.workbench.views.source.model.DataItem;
+import org.rstudio.studio.client.workbench.views.vcs.events.AskPassEvent;
 import org.rstudio.studio.client.workbench.views.vcs.events.VcsRefreshEvent;
+import org.rstudio.studio.client.workbench.views.vcs.events.VcsRefreshEvent.Reason;
 import org.rstudio.studio.client.workbench.views.workspace.events.WorkspaceObjectAssignedEvent;
 import org.rstudio.studio.client.workbench.views.workspace.events.WorkspaceObjectRemovedEvent;
 import org.rstudio.studio.client.workbench.views.workspace.events.WorkspaceRefreshEvent;
@@ -116,6 +116,9 @@ class RemoteServerEventListener
       public static final String ShowWarningBar = "show_warning_bar";
       public static final String OpenProjectError = "open_project_error";
       public static final String VcsRefresh = "vcs_refresh";
+      public static final String AskPass = "ask_pass";
+      public static final String ConsoleProcessOutput = "console_process_output";
+      public static final String ConsoleProcessExit = "console_process_exit";
 
       protected ClientEvent()
       {
@@ -645,7 +648,25 @@ class RemoteServerEventListener
          }
          else if (type.equals(ClientEvent.VcsRefresh))
          {
-            eventBus.fireEvent(new VcsRefreshEvent());
+            eventBus.fireEvent(new VcsRefreshEvent(Reason.NA));
+         }
+         else if (type.equals(ClientEvent.AskPass))
+         {
+            AskPassEvent.Data data = event.getData();
+            eventBus.fireEvent(new AskPassEvent(data.getPrompt()));
+         }
+         else if (type.equals(ClientEvent.ConsoleProcessOutput))
+         {
+            ServerConsoleOutputEvent.Data data = event.getData();
+            eventBus.fireEvent(new ServerConsoleOutputEvent(data.getHandle(),
+                                                            data.getOutput(),
+                                                            data.isError()));
+         }
+         else if (type.equals(ClientEvent.ConsoleProcessExit))
+         {
+            ServerProcessExitEvent.Data data = event.getData();
+            eventBus.fireEvent(new ServerProcessExitEvent(data.getHandle(),
+                                                          data.getExitCode()));
          }
          else if (type.equals(ClientEvent.Quit))
          {

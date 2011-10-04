@@ -14,6 +14,15 @@
 #ifndef CORE_SYSTEM_SYSTEM_HPP
 #define CORE_SYSTEM_SYSTEM_HPP
 
+
+#if defined(_WIN32)
+#include <windef.h>
+typedef DWORD PidType;
+#else  // UNIX
+#include <sys/types.h>
+typedef pid_t PidType;
+#endif
+
 #include <string>
 #include <vector>
 #include <map>
@@ -23,11 +32,15 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/function.hpp>
 
+#include <core/Log.hpp>
 #include <core/Error.hpp>
+
+#include <core/system/Types.hpp>
 
 namespace core {
 
-class FilePath ;
+class FileInfo;
+class FilePath;
 
 namespace system {
 
@@ -39,6 +52,7 @@ enum LogLevel
    kLogLevelDebug = 3
 };
 
+
 #ifndef _WIN32
 Error closeAllFileDescriptors();
 Error closeNonStdFileDescriptors();
@@ -47,6 +61,64 @@ void attachStdFileDescriptorsToDevNull();
 void setStandardStreamsToDevNull();
 Error realPath(const std::string& path, FilePath* pRealPath);
 void addToSystemPath(const FilePath& path, bool prepend = false);
+
+
+// Handles EINTR retrying. Only for use with functions that return -1 on
+// error and set errno.
+template <typename T>
+T posixCall(const boost::function<T()>& func)
+{
+   const T ERR = -1;
+
+   T result;
+   while (true)
+   {
+      result = func();
+
+      if (result == ERR && errno == EINTR)
+         continue;
+      else
+         break;
+   }
+
+   return result;
+}
+
+// Handles EINTR retrying and error construction (also optionally returns
+// the result as an out parameter). Only for use with functions that return
+// -1 on error and set errno.
+template <typename T>
+Error posixCall(const boost::function<T()>& func,
+                       const ErrorLocation& location,
+                       T *pResult = NULL)
+{
+   const T ERR = -1;
+
+   // make the call
+   T result = posixCall<T>(func);
+
+   // set out param (if requested)
+   if (pResult)
+      *pResult = result;
+
+   // return status
+   if (result == ERR)
+      return systemError(errno, location);
+   else
+      return Success();
+}
+
+// Handles EINTR retrying and error logging. Only for use with functions
+// that return -1 on error and set errno.
+template <typename T>
+void safePosixCall(const boost::function<T()>& func,
+                          const ErrorLocation& location)
+{
+   Error error = posixCall<T>(func, location, NULL);
+   if (error)
+      LOG_ERROR(error);
+}
+
 #endif
 
 #ifdef _WIN32
@@ -58,6 +130,7 @@ Error copyMetafileToClipboard(const FilePath& path);
 void initHook();
 // initialization (not thread safe, call from main thread at app startup)  
 void initializeSystemLog(const std::string& programIdentity, int logLevel);
+void initializeStderrLog(const std::string& programIdentity, int logLevel);
 void initializeLog(const std::string& programIdentity,
                    int logLevel,
                    const FilePath& logDir);
@@ -117,27 +190,19 @@ core::Error handleSignal(SignalType signal, void (*handler)(int));
 core::Error ignoreSignal(SignalType signal);   
 core::Error useDefaultSignalHandler(SignalType signal);
 
-   
-// environment
-std::string getenv(const std::string& name);
-void setenv(const std::string& name, const std::string& value);   
-void unsetenv(const std::string& name);
-
 // user info
 std::string username();
 FilePath userHomePath(std::string envOverride = std::string());
 FilePath userSettingsPath(const FilePath& userHomeDirectory,
                           const std::string& appName);
 bool currentUserIsPrivilleged(unsigned int minimumUserId);
-   
-typedef std::pair<std::string,std::string> Option;
-typedef std::vector<Option> Options;
 
 // log
 void log(LogLevel level, const std::string& message) ;
 
 // filesystem
 bool isHiddenFile(const FilePath& filePath) ;
+bool isHiddenFile(const FileInfo& fileInfo) ;
    
 // terminals
 bool stderrIsTerminal();
@@ -158,6 +223,8 @@ Error installPath(const std::string& relativeToExecutable,
 void fixupExecutablePath(FilePath* pExePath);
 
 void abort();
+
+Error terminateProcess(PidType pid);
    
 } // namespace system
 } // namespace core 

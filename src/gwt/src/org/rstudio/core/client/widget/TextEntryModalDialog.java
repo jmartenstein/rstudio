@@ -12,26 +12,29 @@
  */
 package org.rstudio.core.client.widget;
 
-import com.google.gwt.user.client.ui.Label;
-import com.google.gwt.user.client.ui.TextBox;
-import com.google.gwt.user.client.ui.VerticalPanel;
-import com.google.gwt.user.client.ui.Widget;
+import com.google.gwt.user.client.ui.*;
 
 public class TextEntryModalDialog extends ModalDialog<String>
 {
    public TextEntryModalDialog(String title,
                                String caption,
                                String defaultValue,
+                               boolean usePasswordMask,
+                               boolean numbersOnly,
                                int selectionIndex,
                                int selectionLength, String okButtonCaption,
                                int width,
-                               ProgressOperationWithInput<String> operation)
+                               ProgressOperationWithInput<String> okOperation,
+                               Operation cancelOperation)
    {
-      super(title, operation);
+      super(title, okOperation, cancelOperation);
+      numbersOnly_ = numbersOnly;
       selectionIndex_ = selectionIndex;
       selectionLength_ = selectionLength;
       width_ = width;
-      textBox_ = new TextBox();
+      textBox_ = usePasswordMask ? new PasswordTextBox() :
+                 numbersOnly ? new NumericTextBox() :
+                 new TextBox();
       textBox_.setWidth("100%");
       captionLabel_ = new Label(caption);
       
@@ -91,16 +94,35 @@ public class TextEntryModalDialog extends ModalDialog<String>
          textBox_.setFocus(true);
          return false;
       }
-      else
+
+      if (numbersOnly_)
       {
-         return true ;
+         setText(getText().trim());
+         try
+         {
+            Integer.parseInt(getText());
+         }
+         catch (NumberFormatException nfe)
+         {
+            MessageDialog dialog = new MessageDialog(MessageDialog.ERROR,
+                                                     "Error",
+                                                     "Not a valid number.");
+            dialog.addButton("OK", (Operation)null, true, true);
+            dialog.showModal();
+            textBox_.setFocus(true);
+            textBox_.selectAll();
+            return false;
+         }
       }
+
+      return true ;
    }
 
 
    private int width_;
    private Label captionLabel_;
    private TextBox textBox_;
+   private final boolean numbersOnly_;
    private final int selectionIndex_;
    private final int selectionLength_;
 }

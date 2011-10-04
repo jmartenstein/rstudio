@@ -21,6 +21,8 @@
 
 #include <r/RSexp.hpp>
 
+#include "RGraphicsTypes.hpp"
+
 namespace core {
    class Error;
 }
@@ -44,10 +46,11 @@ public:
    virtual ~PlotManipulatorManager() {}
 
 public:
-   core::Error initialize();
+   core::Error initialize(const UnitConversionFunctions& convert);
 
    boost::signal<void ()>& onShowManipulator() ;
    void setPlotManipulatorValues(const core::json::Object& values);
+   void manipulatorPlotClicked(int x, int y);
    
    void executeAndAttachManipulator(SEXP manipulatorSEXP);
    bool hasActiveManipulator() const;
@@ -64,6 +67,11 @@ public:
 
    void ensureManipulatorSaved();
 
+private:
+   bool manipulatorIsActive() const;
+   bool trackingMouseClicks(SEXP manipulatorSEXP) const;
+   void replayManipulator(SEXP manipulatorSEXP);
+
 private:   
    // pending manipulator
    SEXP pendingManipulatorSEXP_;
@@ -73,6 +81,9 @@ private:
 
    // manipulator event hook
    boost::signal<void ()> onShowManipulator_;
+
+   // unit conversion function
+   UnitConversionFunctions convert_;
 
 };
    

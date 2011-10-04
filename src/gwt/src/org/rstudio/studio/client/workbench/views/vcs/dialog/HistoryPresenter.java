@@ -39,6 +39,8 @@ public class HistoryPresenter
       HasClickHandlers getSwitchViewButton();
       CommitListDisplay getCommitList();
       CommitDetailDisplay getCommitDetail();
+
+      HasClickHandlers getRefreshButton();
    }
 
    public interface CommitListDisplay
@@ -63,17 +65,6 @@ public class HistoryPresenter
       server_ = server;
       view_ = view;
 
-      server_.vcsHistory("",
-                         -1,
-                         new SimpleRequestCallback<RpcObjectList<CommitInfo>>()
-      {
-         @Override
-         public void onResponseReceived(RpcObjectList<CommitInfo> response)
-         {
-            view.setData(response.toArrayList());
-         }
-      });
-
       view_.getCommitList().addSelectionChangeHandler(new SelectionChangeEvent.Handler()
       {
          @Override
@@ -82,8 +73,11 @@ public class HistoryPresenter
             CommitInfo commitInfo = view_.getCommitList().getSelectedCommit();
             view_.getCommitDetail().setSelectedCommit(commitInfo);
             view_.getCommitDetail().clearDetails();
-
             invalidation_.invalidate();
+
+            if (commitInfo == null)
+               return;
+
             final Token token = invalidation_.getInvalidationToken();
 
             server_.vcsShow(commitInfo.getId(), new SimpleRequestCallback<String>()
@@ -99,6 +93,31 @@ public class HistoryPresenter
                   view_.getCommitDetail().setDetails(parser);
                }
             });
+         }
+      });
+
+      refreshHistory();
+
+      view_.getRefreshButton().addClickHandler(new ClickHandler()
+      {
+         @Override
+         public void onClick(ClickEvent event)
+         {
+            refreshHistory();
+         }
+      });
+   }
+
+   private void refreshHistory()
+   {
+      server_.vcsHistory("",
+                         -1,
+                         new SimpleRequestCallback<RpcObjectList<CommitInfo>>()
+      {
+         @Override
+         public void onResponseReceived(RpcObjectList<CommitInfo> response)
+         {
+            view_.setData(response.toArrayList());
          }
       });
    }

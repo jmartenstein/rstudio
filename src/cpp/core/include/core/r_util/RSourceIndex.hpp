@@ -27,6 +27,7 @@
 #include <core/Algorithm.hpp>
 #include <core/SafeConvert.hpp>
 #include <core/StringUtils.hpp>
+#include <core/RegexUtils.hpp>
 
 namespace core {
 namespace r_util {
@@ -43,20 +44,35 @@ public:
    };
 
 public:
+   RSourceItem() : type_(None), braceLevel_(0), line_(0), column_(0)
+   {
+   }
+
    RSourceItem(int type,
                const std::string& name,
+               int braceLevel,
                std::size_t line,
                std::size_t column)
-      : type_(type), name_(name), line_(line), column_(column)
+      : type_(type),
+        name_(name),
+        braceLevel_(braceLevel),
+        line_(line),
+        column_(column)
    {
    }
 
    RSourceItem(const std::string& context,
                int type,
                const std::string& name,
+               int braceLevel,
                std::size_t line,
                std::size_t column)
-      : context_(context), type_(type), name_(name), line_(line), column_(column)
+      : context_(context),
+        type_(type),
+        name_(name),
+        braceLevel_(braceLevel),
+        line_(line),
+        column_(column)
    {
    }
 
@@ -68,6 +84,7 @@ public:
    int type() const { return type_; }
    const std::string& context() const { return context_; }
    const std::string& name() const { return name_; }
+   const int braceLevel() const { return braceLevel_; }
    int line() const { return core::safe_convert::numberTo<int>(line_,0); }
    int column() const { return core::safe_convert::numberTo<int>(column_,0); }
 
@@ -93,32 +110,21 @@ public:
                     bool prefixOnly,
                     bool caseSensitive) const
    {
-      boost::smatch match;
-      boost::match_flag_type flags = boost::match_default;
-      if (prefixOnly)
-         flags |= boost::match_continuous;
-      return regex_search(caseSensitive ? name_ : string_utils::toLower(name_),
-                          match,
-                          regex,
-                          flags);
+      return regex_utils::textMatches(name_, regex, prefixOnly, caseSensitive);
    }
 
    RSourceItem withContext(const std::string& context) const
    {
-      return RSourceItem(context, type_, name_, line_, column_);
+      return RSourceItem(context, type_, name_, braceLevel_, line_, column_);
    }
 
 private:
    std::string context_;
    int type_;
    std::string name_;
+   int braceLevel_;
    std::size_t line_;
    std::size_t column_;
-
-// convenience friendship for doing vector operations e.g. resize()
-private:
-   friend class std::vector<RSourceItem>;
-   RSourceItem() : line_(0), column_(0) {}
 };
 
 
@@ -135,8 +141,37 @@ public:
    RSourceIndex(const std::string& context,
                 const std::string& code);
 
+   const std::string& context() const { return context_; }
+
+   template <typename OutputIterator>
+   OutputIterator search(
+                  const std::string& newContext,
+                  const boost::function<bool(const RSourceItem&)> predicate,
+                  OutputIterator out) const
+   {
+      // perform the copy and transform to include context
+      core::algorithm::copy_transformed_if(
+                items_.begin(),
+                items_.end(),
+                out,
+                predicate,
+                boost::bind(&RSourceItem::withContext, _1, newContext));
+
+      // return the output iterator
+      return out;
+   }
+
+   template <typename OutputIterator>
+   OutputIterator search(
+                  const boost::function<bool(const RSourceItem&)> predicate,
+                  OutputIterator out) const
+   {
+      return search(context_, predicate, out);
+   }
+
    template <typename OutputIterator>
    OutputIterator search(const std::string& term,
+                         const std::string& newContext,
                          bool prefixOnly,
                          bool caseSensitive,
                          OutputIterator out) const
@@ -147,9 +182,10 @@ public:
       // check for wildcard character
       if (term.find('*') != std::string::npos)
       {
-         boost::regex patternRegex = patternToRegex(caseSensitive ?
-                                                      term :
-                                                      string_utils::toLower(term));
+         boost::regex patternRegex = regex_utils::wildcardPatternToRegex(
+                                                caseSensitive ?
+                                                    term :
+                                                    string_utils::toLower(term));
          predicate = boost::bind(&RSourceItem::nameMatches,
                                     _1,
                                     patternRegex,
@@ -166,20 +202,17 @@ public:
                                        _1, term, caseSensitive);
       }
 
-      // perform the copy and transform to include context
-      core::algorithm::copy_transformed_if(
-                items_.begin(),
-                items_.end(),
-                out,
-                predicate,
-                boost::bind(&RSourceItem::withContext, _1, context_));
-
-      // return the output iterator
-      return out;
+      return search(newContext, predicate, out);
    }
 
-private:
-   static boost::regex patternToRegex(const std::string& pattern);
+   template <typename OutputIterator>
+   OutputIterator search(const std::string& term,
+                         bool prefixOnly,
+                         bool caseSensitive,
+                         OutputIterator out) const
+   {
+      return search(term, context_, prefixOnly, caseSensitive, out);
+   }
 
 private:
    std::string context_;

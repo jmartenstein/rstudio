@@ -59,8 +59,7 @@ private:
 public:
    virtual ~PlotManager() {}
    
-   core::Error initialize(const core::FilePath& plotsStateFile,
-                          const core::FilePath& graphicsPath,
+   core::Error initialize(const core::FilePath& graphicsPath,
                           const GraphicsDeviceFunctions& graphicsDevice,
                           GraphicsDeviceEvents* pEvents);
    
@@ -100,12 +99,13 @@ public:
 
    virtual boost::signal<void ()>& onShowManipulator() ;
    virtual void setPlotManipulatorValues(const core::json::Object& values);
+   virtual void manipulatorPlotClicked(int x, int y);
 
    virtual void onBeforeExecute();
 
    // manipulate persistent state
-   core::Error savePlotsState(const core::FilePath& plotsStateFile);
-   core::Error restorePlotsState(const core::FilePath& plotsStateFile);
+   core::Error savePlotsState();
+   core::Error restorePlotsState();
       
 private:
    

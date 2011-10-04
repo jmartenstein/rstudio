@@ -53,21 +53,26 @@ import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.WorkbenchContext;
 import org.rstudio.studio.client.workbench.commands.Commands;
-import org.rstudio.studio.client.workbench.model.ChangeTracker;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.WorkbenchServerOperations;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.ui.FontSizeManager;
 import org.rstudio.studio.client.workbench.views.console.events.SendToConsoleEvent;
+import org.rstudio.studio.client.workbench.views.files.events.FileChangeEvent;
+import org.rstudio.studio.client.workbench.views.files.events.FileChangeHandler;
+import org.rstudio.studio.client.workbench.views.files.model.FileChange;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTarget;
+import org.rstudio.studio.client.workbench.views.source.editors.text.DocDisplay.AnchoredSelection;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Position;
 import org.rstudio.studio.client.workbench.views.source.editors.text.events.*;
 import org.rstudio.studio.client.workbench.views.source.editors.text.status.StatusBar;
 import org.rstudio.studio.client.workbench.views.source.editors.text.status.StatusBarPopupMenu;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ui.ChooseEncodingDialog;
-import org.rstudio.studio.client.workbench.views.source.editors.text.TextEditingTarget.DocDisplay.AnchoredSelection;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ui.PublishPdfDialog;
+import org.rstudio.studio.client.workbench.views.source.events.RecordNavigationPositionEvent;
+import org.rstudio.studio.client.workbench.views.source.events.RecordNavigationPositionHandler;
 import org.rstudio.studio.client.workbench.views.source.events.SourceFileSavedEvent;
+import org.rstudio.studio.client.workbench.views.source.events.SourceNavigationEvent;
 import org.rstudio.studio.client.workbench.views.source.model.*;
 
 import java.util.ArrayList;
@@ -83,84 +88,17 @@ public class TextEditingTarget implements EditingTarget
    private static final MyCommandBinder commandBinder =
          GWT.create(MyCommandBinder.class);
 
-   public interface Display extends HasEnsureVisibleHandlers
+   public interface Display extends TextDisplay, HasEnsureVisibleHandlers
    {
-
-      void adaptToFileType(TextFileType fileType);
       HasValue<Boolean> getSourceOnSave();
       void ensureVisible();
       void showWarningBar(String warning);
       void hideWarningBar();
       void showFindReplace();
-      void onActivate();
-      void setFontSize(double size);
+    
       StatusBar getStatusBar();
 
       boolean isAttached();
-   }
-
-   public interface DocDisplay extends HasValueChangeHandlers<Void>,
-                                       IsWidget,
-                                       HasFocusHandlers,
-                                       HasKeyDownHandlers
-   {
-      public interface AnchoredSelection
-      {
-         String getValue();
-         void apply();
-         void detach();
-      }
-      void setFileType(TextFileType fileType);
-      String getCode();
-      void setCode(String code, boolean preserveCursorPosition);
-      void insertCode(String code, boolean blockMode);
-      void focus();
-      void print();
-      String getSelectionValue();
-      String getCurrentLine();
-      void replaceSelection(String code);
-      boolean moveSelectionToNextLine(boolean skipBlankLines);
-      ChangeTracker getChangeTracker();
-
-      String getCode(Position start, Position end);
-      AnchoredSelection createAnchoredSelection(Position start,
-                                                Position end);
-
-      void fitSelectionToLines(boolean expand);
-      int getSelectionOffset(boolean start);
-
-      // Fix bug 964
-      void onActivate();
-
-      void setFontSize(double size);
-
-      void onVisibilityChanged(boolean visible);
-
-      void setHighlightSelectedLine(boolean on);
-      void setHighlightSelectedWord(boolean on);
-      void setShowLineNumbers(boolean on);
-      void setUseSoftTabs(boolean on);
-      void setUseWrapMode(boolean on);
-      void setTabSize(int tabSize);
-      void setShowPrintMargin(boolean on);
-      void setPrintMarginColumn(int column);
-
-      HandlerRegistration addCursorChangedHandler(CursorChangedHandler handler);
-      Position getCursorPosition();
-      void setCursorPosition(Position position);
-      void moveCursorNearTop();
-
-      FunctionStart getCurrentFunction();
-      JsArray<FunctionStart> getFunctionTree();
-
-      HandlerRegistration addUndoRedoHandler(UndoRedoHandler handler);
-      JavaScriptObject getCleanStateToken();
-      boolean checkCleanStateToken(JavaScriptObject token);
-
-      Position getSelectionStart();
-      Position getSelectionEnd();
-      int getLength(int row);
-      int getRowCount();
    }
 
    private class SaveProgressIndicator implements ProgressIndicator
@@ -181,6 +119,11 @@ public class TextEditingTarget implements EditingTarget
 
       public void onCompleted()
       {
+         // don't need to check again soon because we just saved
+         // (without this and when file monitoring is active we'd
+         // end up immediately checking for external edits)
+         externalEditCheckInterval_.reset(250);
+
          if (newFileType_ != null)
             fileType_ = newFileType_;
 
@@ -260,6 +203,12 @@ public class TextEditingTarget implements EditingTarget
       docDisplay_ = docDisplay;
       dirtyState_ = new DirtyState(docDisplay_, false);
       prefs_ = prefs;
+      
+      addRecordNavigationPositionHandler(releaseOnDismiss_, 
+                                         docDisplay_, 
+                                         events_, 
+                                         this);
+       
       docDisplay_.addKeyDownHandler(new KeyDownHandler()
       {
          public void onKeyDown(KeyDownEvent event)
@@ -301,23 +250,37 @@ public class TextEditingTarget implements EditingTarget
    }
    
    @Override
-   public void jumpToPosition(FilePosition position)
+   public void recordCurrentNavigationPosition()
    {
-      // set cursor (adjust by 1 to account for 0-based ace positions)
-      docDisplay_.setCursorPosition(Position.create(position.getLine() - 1, 
-                                                    position.getColumn() - 1));
-      
-      // scroll into view at top
-      docDisplay_.moveCursorNearTop();
+      docDisplay_.recordCurrentNavigationPosition();
    }
-
+   
+   @Override
+   public void navigateToPosition(SourcePosition position, 
+                                  boolean recordCurrent)
+   {
+      docDisplay_.navigateToPosition(position, recordCurrent);
+   }
+   
+   @Override
+   public void restorePosition(SourcePosition position)
+   {
+      docDisplay_.restorePosition(position);
+   }
+   
+   @Override
+   public boolean isAtSourceRow(SourcePosition position)
+   {
+      return docDisplay_.isAtSourceRow(position);
+   }
+   
    private void jumpToPreviousFunction()
    {
       Position cursor = docDisplay_.getCursorPosition();
       JsArray<FunctionStart> functions = docDisplay_.getFunctionTree();
       FunctionStart jumpTo = findPreviousFunction(functions, cursor);
-      docDisplay_.setCursorPosition(jumpTo.getPreamble());
-      docDisplay_.moveCursorNearTop();
+      if (jumpTo != null)
+         docDisplay_.navigateToPosition(toSourcePosition(jumpTo), true);  
    }
 
    private FunctionStart findPreviousFunction(JsArray<FunctionStart> funcs, Position pos)
@@ -347,8 +310,8 @@ public class TextEditingTarget implements EditingTarget
       Position cursor = docDisplay_.getCursorPosition();
       JsArray<FunctionStart> functions = docDisplay_.getFunctionTree();
       FunctionStart jumpTo = findNextFunction(functions, cursor);
-      docDisplay_.setCursorPosition(jumpTo.getPreamble());
-      docDisplay_.moveCursorNearTop();
+      if (jumpTo != null)
+         docDisplay_.navigateToPosition(toSourcePosition(jumpTo), true);
    }
 
    private FunctionStart findNextFunction(JsArray<FunctionStart> funcs, Position pos)
@@ -395,7 +358,7 @@ public class TextEditingTarget implements EditingTarget
       name_.setValue(getNameFromDocument(document, defaultNameProvider), true);
       docDisplay_.setCode(document.getContents(), false);
 
-      registerPrefs();
+      registerPrefs(releaseOnDismiss_, prefs_, docDisplay_);
 
       // Initialize sourceOnSave, and keep it in sync
       view_.getSourceOnSave().setValue(document.sourceOnSave(), false);
@@ -466,16 +429,8 @@ public class TextEditingTarget implements EditingTarget
          });
       }
 
-      releaseOnDismiss_.add(events_.addHandler(
-            ChangeFontSizeEvent.TYPE,
-            new ChangeFontSizeHandler()
-            {
-               public void onChangeFontSize(ChangeFontSizeEvent event)
-               {
-                  view_.setFontSize(event.getFontSize());
-               }
-            }));
-      view_.setFontSize(fontSizeManager_.getSize());
+      syncFontSize(releaseOnDismiss_, events_, view_, fontSizeManager_);
+     
 
       final String rTypeId = FileTypeRegistry.R.getTypeId();
       releaseOnDismiss_.add(prefs_.softWrapRFiles().addValueChangeHandler(
@@ -488,6 +443,35 @@ public class TextEditingTarget implements EditingTarget
                }
             }
       ));
+
+      releaseOnDismiss_.add(events_.addHandler(FileChangeEvent.TYPE,
+                                               new FileChangeHandler() {
+         @Override
+         public void onFileChange(FileChangeEvent event)
+         {
+            // screen out adds and events that aren't for our path
+            FileChange fileChange = event.getFileChange();
+            if (fileChange.getType() == FileChange.ADD)
+               return;
+            else if (!fileChange.getFile().getPath().equals(getPath()))
+               return;
+
+            // always check for changes if this is the active editor
+            if (commandHandlerReg_ != null)
+            {
+               checkForExternalEdit();
+            }
+
+            // also check for changes on modifications if we are not dirty
+            // note that we don't check for changes on removed files because
+            // this will show a confirmation dialog
+            else if (event.getFileChange().getType() == FileChange.MODIFIED &&
+                     dirtyState().getValue() == false)
+            {
+               checkForExternalEdit();
+            }
+         }
+      }));
 
       initStatusBar();
    }
@@ -583,9 +567,8 @@ public class TextEditingTarget implements EditingTarget
                {
                   public void execute()
                   {
-                     docDisplay_.setCursorPosition(func.getPreamble());
-                     docDisplay_.moveCursorNearTop();
-                     docDisplay_.focus();
+                     docDisplay_.navigateToPosition(toSourcePosition(func), 
+                                                    true);
                   }
                });
          menu.addItem(menuItem);
@@ -626,7 +609,7 @@ public class TextEditingTarget implements EditingTarget
                                         (pos.getColumn() + 1));
       updateCurrentFunction();
    }
-
+  
    private void updateCurrentFunction()
    {
       Scheduler.get().scheduleDeferred(
@@ -642,46 +625,7 @@ public class TextEditingTarget implements EditingTarget
                }
             });
    }
-
-   private void registerPrefs()
-   {
-      releaseOnDismiss_.add(prefs_.highlightSelectedLine().bind(
-            new CommandWithArg<Boolean>() {
-               public void execute(Boolean arg) {
-                  docDisplay_.setHighlightSelectedLine(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.highlightSelectedWord().bind(
-            new CommandWithArg<Boolean>() {
-               public void execute(Boolean arg) {
-                  docDisplay_.setHighlightSelectedWord(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.showLineNumbers().bind(
-            new CommandWithArg<Boolean>() {
-               public void execute(Boolean arg) {
-                  docDisplay_.setShowLineNumbers(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.useSpacesForTab().bind(
-            new CommandWithArg<Boolean>() {
-               public void execute(Boolean arg) {
-                  docDisplay_.setUseSoftTabs(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.numSpacesForTab().bind(
-            new CommandWithArg<Integer>() {
-               public void execute(Integer arg) {
-                  docDisplay_.setTabSize(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.showMargin().bind(
-            new CommandWithArg<Boolean>() {
-               public void execute(Boolean arg) {
-                  docDisplay_.setShowPrintMargin(arg);
-               }}));
-      releaseOnDismiss_.add(prefs_.printMarginColumn().bind(
-            new CommandWithArg<Integer>() {
-               public void execute(Integer arg) {
-                  docDisplay_.setPrintMarginColumn(arg);
-               }}));
-   }
-
+   
    private String getNameFromDocument(SourceDocument document,
                                       Provider<String> defaultNameProvider)
    {
@@ -739,6 +683,10 @@ public class TextEditingTarget implements EditingTarget
 
    public void onActivate()
    {
+      // IMPORTANT NOTE: most of this logic is duplicated in 
+      // CodeBrowserEditingTarget (no straightforward way to create a
+      // re-usable implementation) so changes here need to be synced
+      
       // If we're already hooked up for some reason, unhook. 
       // This shouldn't happen though.
       if (commandHandlerReg_ != null)
@@ -768,10 +716,24 @@ public class TextEditingTarget implements EditingTarget
 
    public void onDeactivate()
    {
+      // IMPORTANT NOTE: most of this logic is duplicated in 
+      // CodeBrowserEditingTarget (no straightforward way to create a
+      // re-usable implementation) so changes here need to be synced
+      
       externalEditCheckInvalidation_.invalidate();
 
       commandHandlerReg_.removeHandler();
       commandHandlerReg_ = null;
+
+      // switching tabs is a navigation action
+      try
+      {
+         docDisplay_.recordCurrentNavigationPosition();
+      }
+      catch(Exception e)
+      {
+         Debug.log("Exception recording nav position: " + e.toString());
+      }
    }
 
    @Override
@@ -937,7 +899,7 @@ public class TextEditingTarget implements EditingTarget
 
                         if (d.getValue().isSaveAsDefault())
                         {
-                           prefs_.defaultEncoding().setValue(newEncoding);
+                           prefs_.defaultEncoding().setGlobalValue(newEncoding);
                            updateUIPrefs();
                         }
 
@@ -1048,6 +1010,11 @@ public class TextEditingTarget implements EditingTarget
    public String getPath()
    {
       return docUpdateSentinel_.getPath();
+   }
+   
+   public String getContext()
+   {
+      return null;
    }
 
    public ImageResource getIcon()
@@ -1231,6 +1198,13 @@ public class TextEditingTarget implements EditingTarget
    }
 
    @Handler
+   void onReindent()
+   {
+      docDisplay_.reindent();
+      docDisplay_.focus();
+   }
+
+   @Handler
    void onExecuteCode()
    {
       docDisplay_.focus();
@@ -1347,6 +1321,35 @@ public class TextEditingTarget implements EditingTarget
    {
       statusBar_.getFunction().click();
    }
+
+   @Handler
+   void onGoToLine()
+   {
+      globalDisplay_.promptForInteger(
+            "Jump to Line",
+            "Enter line number:",
+            null,
+            new ProgressOperationWithInput<Integer>()
+            {
+               @Override
+               public void execute(Integer line, ProgressIndicator indicator)
+               {
+                  line = Math.max(1, line);
+                  line = Math.min(docDisplay_.getRowCount(), line);
+
+                  docDisplay_.navigateToPosition(
+                        SourcePosition.create(line-1, 0),
+                        true);
+               }
+            },
+            null);
+   }
+
+   @Handler
+   void onGoToFunctionDefinition()
+   {
+      docDisplay_.goToFunctionDefinition();
+   } 
    
    @Handler
    public void onSetWorkingDirToActiveDoc()
@@ -1415,6 +1418,10 @@ public class TextEditingTarget implements EditingTarget
       String code = docDisplay_.getCode();
       if (code != null && code.trim().length() > 0)
       {
+         // R 2.14 prints a warning when sourcing a file with no trailing \n
+         if (!code.endsWith("\n"))
+            code = code + "\n";
+
          boolean sweave = fileType_.canCompilePDF();
          
          if (dirtyState_.getValue() || sweave)
@@ -1443,7 +1450,7 @@ public class TextEditingTarget implements EditingTarget
       // update pref if necessary
       if (prefs_.sourceWithEcho().getValue() != echo)
       {
-         prefs_.sourceWithEcho().setValue(echo, true);
+         prefs_.sourceWithEcho().setGlobalValue(echo, true);
          updateUIPrefs();
       }
    }
@@ -1692,7 +1699,116 @@ public class TextEditingTarget implements EditingTarget
             session_.getSessionInfo().getUiPrefs(), 
             new SimpleRequestCallback<Void>("Error Saving Preference"));
    }
+   
+   private SourcePosition toSourcePosition(FunctionStart func)
+   {
+      Position pos = func.getPreamble();
+      return SourcePosition.create(pos.getRow(), pos.getColumn());
+   }
+   
+   
+   // these methods are public static so that other editing targets which
+   // display source code (but don't inherit from TextEditingTarget) can share
+   // their implementation
+   
+   public static void registerPrefs(
+                     ArrayList<HandlerRegistration> releaseOnDismiss,
+                     UIPrefs prefs,
+                     final DocDisplay docDisplay)
+   {
+      releaseOnDismiss.add(prefs.highlightSelectedLine().bind(
+            new CommandWithArg<Boolean>() {
+               public void execute(Boolean arg) {
+                  docDisplay.setHighlightSelectedLine(arg);
+               }}));
+      releaseOnDismiss.add(prefs.highlightSelectedWord().bind(
+            new CommandWithArg<Boolean>() {
+               public void execute(Boolean arg) {
+                  docDisplay.setHighlightSelectedWord(arg);
+               }}));
+      releaseOnDismiss.add(prefs.showLineNumbers().bind(
+            new CommandWithArg<Boolean>() {
+               public void execute(Boolean arg) {
+                  docDisplay.setShowLineNumbers(arg);
+               }}));
+      releaseOnDismiss.add(prefs.useSpacesForTab().bind(
+            new CommandWithArg<Boolean>() {
+               public void execute(Boolean arg) {
+                  docDisplay.setUseSoftTabs(arg);
+               }}));
+      releaseOnDismiss.add(prefs.numSpacesForTab().bind(
+            new CommandWithArg<Integer>() {
+               public void execute(Integer arg) {
+                  docDisplay.setTabSize(arg);
+               }}));
+      releaseOnDismiss.add(prefs.showMargin().bind(
+            new CommandWithArg<Boolean>() {
+               public void execute(Boolean arg) {
+                  docDisplay.setShowPrintMargin(arg);
+               }}));
+      releaseOnDismiss.add(prefs.printMarginColumn().bind(
+            new CommandWithArg<Integer>() {
+               public void execute(Integer arg) {
+                  docDisplay.setPrintMarginColumn(arg);
+               }}));
+   }
+   
+   public static void syncFontSize(
+                              ArrayList<HandlerRegistration> releaseOnDismiss,
+                              EventBus events,
+                              final TextDisplay view,
+                              FontSizeManager fontSizeManager)
+   {
+      releaseOnDismiss.add(events.addHandler(
+            ChangeFontSizeEvent.TYPE,
+            new ChangeFontSizeHandler()
+            {
+               public void onChangeFontSize(ChangeFontSizeEvent event)
+               {
+                  view.setFontSize(event.getFontSize());
+               }
+            }));
+      view.setFontSize(fontSizeManager.getSize());
 
+   }
+   
+   public static void onPrintSourceDoc(final DocDisplay docDisplay)
+   {
+      Scheduler.get().scheduleDeferred(new ScheduledCommand()
+      {
+         public void execute()
+         {
+            docDisplay.print();
+         }
+      });
+   }
+   
+   public static void addRecordNavigationPositionHandler(
+                  ArrayList<HandlerRegistration> releaseOnDismiss,
+                  final DocDisplay docDisplay,
+                  final EventBus events,
+                  final EditingTarget target)
+   {
+      releaseOnDismiss.add(docDisplay.addRecordNavigationPositionHandler(
+            new RecordNavigationPositionHandler() {
+              @Override
+              public void onRecordNavigationPosition(
+                                         RecordNavigationPositionEvent event)
+              {   
+                 SourcePosition pos = SourcePosition.create(
+                                        target.getContext(),
+                                        event.getPosition().getRow(),
+                                        event.getPosition().getColumn(),
+                                        docDisplay.getScrollTop());
+                 events.fireEvent(new SourceNavigationEvent(
+                                               SourceNavigation.create(
+                                                   target.getId(), 
+                                                   target.getPath(), 
+                                                   pos))); 
+              }           
+           }));
+   }
+   
    private StatusBar statusBar_;
    private TextFileType[] statusBarFileTypes_;
    private DocDisplay docDisplay_;

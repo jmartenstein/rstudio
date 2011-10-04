@@ -11,21 +11,33 @@
  *
  */
 
+#if defined(_WIN32)
+// Necessary to avoid compile error on Win x64
+#include <winsock2.h>
+#endif
+
 #include <iostream>
 
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
 #include <core/Log.hpp>
 #include <core/ProgramStatus.hpp>
+#include <core/SafeConvert.hpp>
 
 #include <core/system/System.hpp>
+#include <core/system/Environment.hpp>
 
 #include <core/http/Request.hpp>
 #include <core/http/Response.hpp>
+#if !defined(_WIN32)
 #include <core/http/LocalStreamBlockingClient.hpp>
+#endif
+#include <core/http/TcpIpBlockingClient.hpp>
 
 #include <session/SessionConstants.hpp>
+#if !defined(_WIN32)
 #include <session/SessionLocalStreams.hpp>
+#endif
 
 #include "PostbackOptions.hpp"
 
@@ -38,10 +50,31 @@ int exitFailure(const Error& error)
    return EXIT_FAILURE;
 }
 
+Error sendRequest(http::Request* pRequest, http::Response* pResponse)
+{
+   std::string portNum = core::system::getenv(kRSessionPortNumber);
+   if (!portNum.empty())
+   {
+      pRequest->setHeader("X-Shared-Secret",
+                          core::system::getenv("RS_SHARED_SECRET"));
+      return http::sendRequest("127.0.0.1", portNum, *pRequest, pResponse);
+   }
+   else
+   {
+#if !defined(_WIN32)
+      // determine stream path
+      std::string userIdentity = core::system::getenv(kRStudioUserIdentity);
+      FilePath streamPath = session::local_streams::streamPath(userIdentity);
+
+      return http::sendRequest(streamPath, *pRequest, pResponse);
+#endif
+   }
+}
+
 int main(int argc, char * const argv[]) 
 {
    try
-   { 
+   {
       // initialize log
       initializeSystemLog("rpostback", core::system::kLogLevelWarning);
 
@@ -55,10 +88,6 @@ int main(int argc, char * const argv[])
       std::string uri = std::string(kLocalUriLocationPrefix kPostbackUriScope) + 
                         options.command();
       
-      // determine stream path
-      std::string userIdentity = core::system::getenv(kRStudioUserIdentity);
-      FilePath streamPath = session::local_streams::streamPath(userIdentity);
-
       // build postback request
       http::Request request;
       request.setMethod("POST");
@@ -69,11 +98,13 @@ int main(int argc, char * const argv[])
 
       // send it
       http::Response response;
-      Error error = http::sendRequest(streamPath, request,  &response);
+      Error error = sendRequest(&request, &response);
       if (error)
          return exitFailure(error);
-      else
-         return EXIT_SUCCESS;
+
+      std::string exitCode = response.headerValue(kPostbackExitCodeHeader);
+      std::cout << response.body();
+      return safe_convert::stringTo<int>(exitCode, EXIT_FAILURE);
    }
    CATCH_UNEXPECTED_EXCEPTION
    

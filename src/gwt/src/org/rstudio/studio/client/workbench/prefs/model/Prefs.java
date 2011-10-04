@@ -13,12 +13,12 @@
 package org.rstudio.studio.client.workbench.prefs.model;
 
 import com.google.gwt.core.client.JavaScriptObject;
+import com.google.gwt.event.logical.shared.HasValueChangeHandlers;
 import com.google.gwt.event.logical.shared.ValueChangeEvent;
 import com.google.gwt.event.logical.shared.ValueChangeHandler;
 import com.google.gwt.event.shared.GwtEvent;
 import com.google.gwt.event.shared.HandlerManager;
 import com.google.gwt.event.shared.HandlerRegistration;
-import com.google.gwt.user.client.ui.HasValue;
 import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.js.JsObject;
 
@@ -26,8 +26,28 @@ import java.util.HashMap;
 
 public abstract class Prefs
 {
-   public interface PrefValue<T> extends HasValue<T>
+   public interface PrefValue<T> extends HasValueChangeHandlers<T>
    {
+      // get accessor for prefs -- this automatically checks the project
+      // prefs, then the global prefs, then returns the default. this should
+      // be called by user code that wants to depend on prefs
+      T getValue();
+      
+      // explicit get and set of global pref values -- these should be used by
+      // preferences UI and be followed by a call to server.setUiPrefs to 
+      // make sure they are persisted
+      T getGlobalValue();
+      void setGlobalValue(T value);
+      void setGlobalValue(T value, boolean fireEvents);
+      
+      // explicit set for project values -- these are here so that the project
+      // options dialog can notify other modules that preferences have changed
+      // these values are not persisted by this module (rather, the project 
+      // options dialog has its own codepath to read and write them along with
+      // the other non-uipref project options)
+      void setProjectValue(T value);
+      void setProjectValue(T value, boolean fireEvents);
+      
       HandlerRegistration bind(CommandWithArg<T> handler);
    }
 
@@ -51,36 +71,45 @@ public abstract class Prefs
          handler.execute(getValue());
          return reg;
       }
-
+      
       public T getValue()
       {
-         if (!root_.hasKey(name_))
+         if (projectRoot_.hasKey(name_))
+            return doGetValue(projectRoot_);
+         else
+            return getGlobalValue();
+      }
+
+      public T getGlobalValue()
+      {
+         if (!globalRoot_.hasKey(name_))
             return defaultValue_;
-         return doGetValue();
+         return doGetValue(globalRoot_);
       }
 
-      public abstract T doGetValue();
+      public abstract T doGetValue(JsObject root);
 
-      public void setValue(T value)
+      public void setGlobalValue(T value)
       {
-         setValue(value, true);
+         setGlobalValue(value, true);
       }
 
-      public void setValue(T value, boolean fireEvents)
+      public void setGlobalValue(T value, boolean fireEvents)
       {
-         T val = doGetValue();
-
-         if (value == null && val == null)
-            return;
-         if (value != null && val != null && value.equals(val))
-            return;
-
-         doSetValue(name_, value);
-         if (fireEvents)
-            ValueChangeEvent.fire(this, value);
+         setValue(globalRoot_, value, fireEvents);
+      }
+      
+      public void setProjectValue(T value)
+      {
+         setProjectValue(value, true);
+      }
+      
+      public void setProjectValue(T value, boolean fireEvents)
+      {
+         setValue(projectRoot_, value, fireEvents);
       }
 
-      protected abstract void doSetValue(String name, T value);
+      protected abstract void doSetValue(JsObject root, String name, T value);
 
       public HandlerRegistration addValueChangeHandler(
             ValueChangeHandler<T> handler)
@@ -91,6 +120,21 @@ public abstract class Prefs
       public void fireEvent(GwtEvent<?> event)
       {
          handlerManager_.fireEvent(event);
+      }
+      
+      private void setValue(JsObject root, T value, boolean fireEvents)
+      {
+         T val = doGetValue(root);
+
+         if (value == null && val == null)
+            return;
+         if (value != null && val != null && value.equals(val))
+            return;
+
+         doSetValue(root, name_, value);
+         if (fireEvents)
+            ValueChangeEvent.fire(this, getValue());
+         
       }
 
       protected final String name_;
@@ -106,15 +150,15 @@ public abstract class Prefs
       }
 
       @Override
-      public Boolean doGetValue()
+      public Boolean doGetValue(JsObject root)
       {
-         return root_.getBoolean(name_);
+         return root.getBoolean(name_);
       }
 
       @Override
-      protected void doSetValue(String name, Boolean value)
+      protected void doSetValue(JsObject root, String name, Boolean value)
       {
-         root_.setBoolean(name, value);
+         root.setBoolean(name, value);
       }
    }
 
@@ -126,15 +170,15 @@ public abstract class Prefs
       }
 
       @Override
-      public Integer doGetValue()
+      public Integer doGetValue(JsObject root)
       {
-         return root_.getInteger(name_);
+         return root.getInteger(name_);
       }
 
       @Override
-      protected void doSetValue(String name, Integer value)
+      protected void doSetValue(JsObject root, String name, Integer value)
       {
-         root_.setInteger(name, value);
+         root.setInteger(name, value);
       }
    }
 
@@ -146,15 +190,15 @@ public abstract class Prefs
       }
 
       @Override
-      public Double doGetValue()
+      public Double doGetValue(JsObject root)
       {
-         return root_.getDouble(name_);
+         return root.getDouble(name_);
       }
 
       @Override
-      protected void doSetValue(String name, Double value)
+      protected void doSetValue(JsObject root, String name, Double value)
       {
-         root_.setDouble(name, value);
+         root.setDouble(name, value);
       }
    }
 
@@ -166,15 +210,15 @@ public abstract class Prefs
       }
 
       @Override
-      public String doGetValue()
+      public String doGetValue(JsObject root)
       {
-         return root_.getString(name_);
+         return root.getString(name_);
       }
 
       @Override
-      protected void doSetValue(String name, String value)
+      protected void doSetValue(JsObject root, String name, String value)
       {
-         root_.setString(name, value);
+         root.setString(name, value);
       }
    }
 
@@ -186,21 +230,22 @@ public abstract class Prefs
       }
 
       @Override
-      public T doGetValue()
+      public T doGetValue(JsObject root)
       {
-         return root_.<T>getObject(name_);
+         return root.<T>getObject(name_);
       }
 
       @Override
-      protected void doSetValue(String name, T value)
+      protected void doSetValue(JsObject root, String name, T value)
       {
-         root_.setObject(name, value);
+         root.setObject(name, value);
       }
    }
 
-   public Prefs(JsObject root)
+   public Prefs(JsObject root, JsObject projectRoot)
    {
-      root_ = root;
+      globalRoot_ = root;
+      projectRoot_ = projectRoot;
    }
 
    @SuppressWarnings("unchecked")
@@ -263,7 +308,8 @@ public abstract class Prefs
       return val;
    }
 
-   private final JsObject root_;
+   private final JsObject globalRoot_;
+   private final JsObject projectRoot_;
    private final HashMap<String, PrefValue<?>> values_ =
          new HashMap<String, PrefValue<?>>();
 }

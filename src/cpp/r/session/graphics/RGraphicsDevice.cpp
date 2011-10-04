@@ -44,6 +44,11 @@
 #define TRACE_GD_CALL
 #endif
 
+extern "C" double Rf_xDevtoUsr(double, pGEDevDesc);
+extern "C" double Rf_yDevtoUsr(double, pGEDevDesc);
+extern "C" double Rf_xDevtoNDC(double, pGEDevDesc);
+extern "C" double Rf_yDevtoNDC(double, pGEDevDesc);
+
 using namespace core ;
 
 namespace r {
@@ -351,6 +356,23 @@ void GD_OnExit(pDevDesc dd)
    // suggests you might want to do this!)
 }
 
+int GD_HoldFlush(pDevDesc dd, int level)
+{
+   TRACE_GD_CALL
+
+   // NOTE: holdflush does not apply to bitmap devices since they are
+   // already "buffered" via the fact that they only do expensive operations
+   // (write to file) on dev.off. We could in theory use dev.flush as
+   // an indicator that we should detectChanges (e.g. when in a long
+   // running piece of code which doesn't yield to the REPL -- in practice
+   // however there are way too many flushes yielding lots of extra disk io
+   // and http round trips. If anything perhaps we could introduce a
+   // time-buffered variation where flush could set a flag that is checked
+   // every e.g. 1-second during background processing.
+
+   return 0;
+}
+
 void resyncDisplayList()
 {
    // get pointers to device desc and cairo data
@@ -402,8 +424,8 @@ SEXP createGD()
    
    BEGIN_SUSPEND_INTERRUPTS 
    {
-      // initialize v8 structure
-      DevDescVersion8 devDesc;
+      // initialize v9 structure
+      DevDescVersion9 devDesc;
 
       // device functions
       devDesc.activate = GD_Activate;
@@ -434,6 +456,14 @@ SEXP createGD()
       devDesc.onExit = GD_OnExit;
       devDesc.eventEnv = R_NilValue;
       devDesc.eventHelper = NULL;
+      devDesc.holdflush = GD_HoldFlush;
+
+      // capabilities flags
+      devDesc.haveTransparency = 2;
+      devDesc.haveTransparentBg = 2;
+      devDesc.haveRaster = 2;
+      devDesc.haveCapture = 1;
+      devDesc.haveLocator = 2;
 
       // allocate device
       pDevDesc pDev = handler::dev_desc::allocate(devDesc);
@@ -531,6 +561,23 @@ DisplaySize displaySize()
    return DisplaySize(s_width, s_height);
 }
 
+void deviceConvert(double* x,
+                   double* y,
+                   const boost::function<double(double,pGEDevDesc)>& xConv,
+                   const boost::function<double(double,pGEDevDesc)>& yConv)
+{
+   if (s_pGEDevDesc != NULL)
+   {
+      *x = xConv(*x, s_pGEDevDesc);
+      *y = yConv(*y, s_pGEDevDesc);
+   }
+   else
+   {
+      LOG_WARNING_MESSAGE(
+            "deviceConvert called with no active graphics device");
+   }
+}
+
 Error saveSnapshot(const core::FilePath& snapshotFile,
                    const core::FilePath& imageFile)
 {
@@ -596,24 +643,30 @@ const int kDefaultWidth = 500;
 const int kDefaultHeight = 500; 
    
 Error initialize(
-            const FilePath& plotsStateFile,
             const FilePath& graphicsPath,
             const boost::function<bool(double*,double*)>& locatorFunction)
 {      
    // save reference to locator function
    s_locatorFunction = locatorFunction;
    
+   // device conversion functions
+   UnitConversionFunctions convert;
+   convert.deviceToUser = boost::bind(deviceConvert,
+                                    _1, _2, Rf_xDevtoUsr, Rf_yDevtoUsr);
+   convert.deviceToNDC = boost::bind(deviceConvert,
+                                    _1, _2, Rf_xDevtoNDC, Rf_yDevtoNDC);
+
    // create plot manager (provide functions & events)
    GraphicsDeviceFunctions graphicsDevice;
    graphicsDevice.displaySize = displaySize;
+   graphicsDevice.convert = convert;
    graphicsDevice.saveSnapshot = saveSnapshot;
    graphicsDevice.restoreSnapshot = restoreSnapshot;
    graphicsDevice.copyToActiveDevice = copyToActiveDevice;
    graphicsDevice.imageFileExtension = imageFileExtension;
    graphicsDevice.close = close;
    graphicsDevice.onBeforeExecute = onBeforeExecute;
-   Error error = plotManager().initialize(plotsStateFile,
-                                          graphicsPath,
+   Error error = plotManager().initialize(graphicsPath,
                                           graphicsDevice,
                                           &s_graphicsDeviceEvents);
    if (error)

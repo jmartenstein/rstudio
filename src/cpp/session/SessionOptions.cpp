@@ -20,6 +20,7 @@
 #include <core/ProgramOptions.hpp>
 #include <core/SafeConvert.hpp>
 #include <core/system/System.hpp>
+#include <core/system/Environment.hpp>
 
 #include <core/Error.hpp>
 #include <core/Log.hpp>
@@ -176,7 +177,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    options_description external("external");
    external.add_options()
       ("external-rpostback-path", 
-       value<std::string>(&rpostbackPath_)->default_value("bin/rpostback"),
+       value<std::string>(&rpostbackPath_)->default_value("bin/postback/rpostback"),
        "Path to rpostback executable");
    
    // user options (default user identity to current username)
@@ -282,7 +283,15 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
 
    // shared secret with parent
    secret_ = core::system::getenv("RS_SHARED_SECRET");
-   core::system::unsetenv("RS_SHARED_SECRET");
+   /* SECURITY: Need RS_SHARED_SECRET to be available to
+      rpostback. However, we really ought to communicate
+      it in a more secure manner than this, at least on
+      Windows where even within the same user session some
+      processes can have different priviliges (integrity
+      levels) than others. For example, using a named pipe
+      with proper SACL to retrieve the shared secret, where
+      the name of the pipe is in an environment variable. */
+   //core::system::unsetenv("RS_SHARED_SECRET");
 
    // initial working dir override
    initialWorkingDirOverride_ = core::system::getenv("RS_INITIAL_WD");

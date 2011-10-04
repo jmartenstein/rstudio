@@ -68,6 +68,7 @@ public class FileTypeRegistry
    
    public static final DataFrameType DATAFRAME = new DataFrameType();
    public static final UrlContentType URLCONTENT = new UrlContentType();
+   public static final CodeBrowserType CODEBROWSER = new CodeBrowserType();
 
    public static final BrowserType BROWSER = new BrowserType();
    
@@ -82,6 +83,7 @@ public class FileTypeRegistry
       register("*.txt", TEXT, icons.iconText());
       register("*.log", TEXT, icons.iconText());
       register("README", TEXT, icons.iconText());
+      register(".gitignore", TEXT, icons.iconText());
       register("*.r", R, icons.iconRdoc());
       register(".rprofile", R, icons.iconRprofile());
       register("*.rhistory", RHISTORY, icons.iconRhistory());
@@ -208,7 +210,7 @@ public class FileTypeRegistry
       else
          return TEXT;
    }
-
+   
    public ImageResource getIconForFile(FileSystemItem file)
    {
       if (file.isDirectory())
@@ -219,10 +221,16 @@ public class FileTypeRegistry
             return ICONS.iconFolder();
       }
 
-      ImageResource icon = iconsByFilename_.get(file.getName().toLowerCase());
+      return getIconForFilename(file.getName());
+   }
+   
+   public ImageResource getIconForFilename(String filename)
+   {
+      ImageResource icon = iconsByFilename_.get(filename.toLowerCase());
       if (icon != null)
          return icon;
-      icon = iconsByFileExtension_.get(file.getExtension().toLowerCase());
+      String ext = FileSystemItem.getExtensionFromPath(filename);
+      icon = iconsByFileExtension_.get(ext.toLowerCase());
       if (icon != null)
          return icon;
 

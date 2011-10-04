@@ -71,6 +71,10 @@ public class SourceShim extends Composite
       public abstract void onLastTab();
       @Handler
       public abstract void onSwitchToTab();
+      @Handler
+      public abstract void onSourceNavigateBack();
+      @Handler
+      public abstract void onSourceNavigateForward();
 
       @Override
       protected void preInstantiationHook(Command continuation)

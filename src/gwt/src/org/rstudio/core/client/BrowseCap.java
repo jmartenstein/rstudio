@@ -12,6 +12,8 @@
  */
 package org.rstudio.core.client;
 
+import org.rstudio.core.client.theme.ThemeFonts;
+
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.dom.client.Document;
 
@@ -21,6 +23,8 @@ public class BrowseCap
    {
       if (hasMetaKey())
          return -1;
+      else if (FIXED_UBUNTU_MONO)
+         return 0.4;
       else
          return 0;
    }
@@ -81,8 +85,26 @@ public class BrowseCap
    }-*/;
    private static final String OPERATING_SYSTEM = getOperatingSystem();
 
+   private static final boolean getFixedUbuntuMono()
+   {
+      if (isLinux())
+      {
+         String fixedWidthFont =  ThemeFonts.getFixedWidthFont();
+         return (StringUtil.notNull(fixedWidthFont).equals("\"Ubuntu Mono\""));
+      }
+      else
+      {
+         return false;
+      }
+   }
+
+   private static final boolean FIXED_UBUNTU_MONO = getFixedUbuntuMono();
+
    static
    {
       Document.get().getBody().addClassName(OPERATING_SYSTEM);
+
+      if (FIXED_UBUNTU_MONO)
+         Document.get().getBody().addClassName("ubuntu_mono");
    }
 }

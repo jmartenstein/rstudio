@@ -31,7 +31,6 @@ public:
                      const std::string& message);
 
 private:
-    std::string formatLogEntry(const std::string& message);
     bool rotateLogFile();
 
     std::string programIdentity_;

@@ -1,5 +1,5 @@
 /*
- * ExecuteCommandResult.java
+ * SearchPathFunctionDefinition.java
  *
  * Copyright (C) 2009-11 by RStudio, Inc.
  *
@@ -10,25 +10,27 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-package org.rstudio.studio.client.common.vcs;
+package org.rstudio.studio.client.workbench.codesearch.model;
 
 import com.google.gwt.core.client.JavaScriptObject;
 
-public class ExecuteCommandResult extends JavaScriptObject
+
+public class SearchPathFunctionDefinition extends JavaScriptObject
 {
-   protected ExecuteCommandResult()
-   {}
-
-   public native final String getOutput() /*-{
-      return this.output;
-   }-*/;
-
-   public final boolean isError()
+   protected SearchPathFunctionDefinition()
    {
-      return isErrorNative() != 0;
    }
-
-   private native int isErrorNative() /*-{
-      return this.error ? 1 : 0;
+   
+   public final native String getName() /*-{
+      return this.name;
    }-*/;
+   
+   public final native String getNamespace() /*-{
+      return this.namespace;
+   }-*/;
+   
+   public final native String getCode() /*-{
+      return this.code;
+   }-*/;
+   
 }

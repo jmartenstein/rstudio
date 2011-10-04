@@ -1,10 +1,23 @@
+/*
+ * CodeSearchDialog.java
+ *
+ * Copyright (C) 2009-11 by RStudio, Inc.
+ *
+ * This program is licensed to you under the terms of version 3 of the
+ * GNU Affero General Public License. This program is distributed WITHOUT
+ * ANY EXPRESS OR IMPLIED WARRANTY, INCLUDING THOSE OF NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. Please refer to the
+ * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
+ *
+ */
 package org.rstudio.studio.client.workbench.codesearch.ui;
 
 import org.rstudio.core.client.widget.CanFocus;
 import org.rstudio.core.client.widget.ModalDialogBase;
 import org.rstudio.studio.client.workbench.codesearch.CodeSearch;
 
-import com.google.gwt.user.client.Event;
+import com.google.gwt.core.client.Scheduler;
+import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.user.client.Window;
 import com.google.gwt.user.client.ui.VerticalPanel;
 import com.google.gwt.user.client.ui.Widget;
@@ -21,7 +34,7 @@ public class CodeSearchDialog extends ModalDialogBase
       setGlassEnabled(false);
       setAutoHideEnabled(true);
       
-      setText("Go to Function/File");
+      setText("Go to File/Function");
       
       pCodeSearch_ = pCodeSearch;
    }
@@ -60,15 +73,31 @@ public class CodeSearchDialog extends ModalDialogBase
    }
    
    @Override
-   protected void onEscapeKeyDown(Event.NativePreviewEvent event)
+   protected void onUnload()
    {
-      closeDialog();
+      super.onUnload();
+      if (codeSearch_ != null)
+         codeSearch_.detachEventBusHandlers();
    }
    
    @Override
    public void onCompleted()
    {
       closeDialog();  
+   }
+   
+   @Override
+   public void onCancel()
+   {
+      // delay to prevent ESC key from ever getting into the editor
+      Scheduler.get().scheduleDeferred(new ScheduledCommand() {
+         @Override
+         public void execute()
+         {
+            closeDialog(); 
+         }      
+      });
+    
    }
    
    @Override

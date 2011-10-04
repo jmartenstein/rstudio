@@ -181,43 +181,13 @@ std::string SourceDocument::getProperty(const std::string& name)
       return "";
    }
 }
-      
+
 // set contents from string
 void SourceDocument::setContents(const std::string& contents)
 {
    contents_ = contents;
    hash_ = hash::crc32Hash(contents_);
 }
-
-namespace {
-
-Error readAndDecode(const FilePath& docPath,
-                    const std::string& encoding,
-                    bool allowSubstChars,
-                    std::string* pContents)
-{
-   // read contents
-   std::string encodedContents;
-   Error error = readStringFromFile(docPath, &encodedContents,
-                                    options().sourceLineEnding());
-
-   if (error)
-      return error ;
-
-   error = r::util::iconvstr(encodedContents, encoding, "UTF-8",
-                             allowSubstChars, pContents);
-   if (error)
-      return error;
-
-   stripBOM(pContents);
-   // Detect invalid UTF-8 sequences and recover
-   error = string_utils::utf8Clean(pContents->begin(),
-                                   pContents->end(),
-                                   '?');
-   return error ;
-}
-
-} // anonymous namespace
 
 // set contents from file
 Error SourceDocument::setPathAndContents(const std::string& path,
@@ -227,8 +197,10 @@ Error SourceDocument::setPathAndContents(const std::string& path,
    FilePath docPath = module_context::resolveAliasedPath(path);
 
    std::string contents;
-   Error error = readAndDecode(docPath, encoding(), allowSubstChars,
-                               &contents);
+   Error error = module_context::readAndDecodeFile(docPath,
+                                                   encoding(),
+                                                   allowSubstChars,
+                                                   &contents);
    if (error)
       return error ;
 
@@ -264,7 +236,10 @@ Error SourceDocument::updateDirty()
       if (docPath.exists() && docPath.size() <= (1024*1024))
       {
          std::string contents;
-         Error error = readAndDecode(docPath, encoding(), true, &contents);
+         Error error = module_context::readAndDecodeFile(docPath,
+                                                         encoding(),
+                                                         true,
+                                                         &contents);
          if (error)
             return error;
 
@@ -381,9 +356,10 @@ void SourceDocument::editProperty(const json::Object::value_type& property)
    }
 }
 
-bool sortByCreated(const SourceDocument& doc1, const SourceDocument& doc2)
+bool sortByCreated(const boost::shared_ptr<SourceDocument>& pDoc1,
+                   const boost::shared_ptr<SourceDocument>& pDoc2)
 {
-   return doc1.created() < doc2.created();
+   return pDoc1->created() < pDoc2->created();
 }
 
 FilePath path()
@@ -391,7 +367,7 @@ FilePath path()
    return module_context::scopedScratchPath().complete("source_database");
 }
    
-Error get(const std::string& id, SourceDocument* pDoc)
+Error get(const std::string& id, boost::shared_ptr<SourceDocument> pDoc)
 {
    FilePath filePath = source_database::path().complete(id);
    if (filePath.exists())
@@ -437,7 +413,7 @@ bool isSourceDocument(const FilePath& filePath)
       return true;
 }
 
-Error list(std::vector<SourceDocument>* pDocs)
+Error list(std::vector<boost::shared_ptr<SourceDocument> >* pDocs)
 {
    std::vector<FilePath> files ;
    Error error = source_database::path().children(&files);
@@ -449,10 +425,10 @@ Error list(std::vector<SourceDocument>* pDocs)
       if (isSourceDocument(filePath))
       {
          // get the source doc
-         SourceDocument doc ;
-         Error error = source_database::get(filePath.filename(), &doc);
+         boost::shared_ptr<SourceDocument> pDoc(new SourceDocument()) ;
+         Error error = source_database::get(filePath.filename(), pDoc);
          if (!error)
-            pDocs->push_back(doc);
+            pDocs->push_back(pDoc);
          else
             LOG_ERROR(error);
       }
@@ -461,24 +437,27 @@ Error list(std::vector<SourceDocument>* pDocs)
    return Success();
 }
    
-Error put(const SourceDocument& doc)
+Error put(boost::shared_ptr<SourceDocument> pDoc)
 {
    // get json representation
    json::Object jsonDoc ;
-   doc.writeToJson(&jsonDoc);
+   pDoc->writeToJson(&jsonDoc);
    std::ostringstream ostr ;
    json::writeFormatted(jsonDoc, ostr);
    
    // write to file
-   FilePath filePath = source_database::path().complete(doc.id());
+   FilePath filePath = source_database::path().complete(pDoc->id());
    Error error = writeStringToFile(filePath, ostr.str());
    if (error)
       return error ;
 
-   // write properties to durable storage
-   error = putProperties(doc.path(), doc.properties());
-   if (error)
-      LOG_ERROR(error);
+   // write properties to durable storage (if there is a path)
+   if (!pDoc->path().empty())
+   {
+      error = putProperties(pDoc->path(), pDoc->properties());
+      if (error)
+         LOG_ERROR(error);
+   }
 
    return Success();
 }
@@ -505,43 +484,6 @@ Error removeAll()
    return Success();
 }
 
-
-Error getSourceDocumentsJson(core::json::Array* pJsonDocs)
-{
-   // get the docs and sort them by created
-   std::vector<SourceDocument> docs ;
-   Error error = source_database::list(&docs);
-   if (error)
-      return error ;
-   std::sort(docs.begin(), docs.end(), sortByCreated);
-   
-   // populate the array
-   pJsonDocs->clear();
-   BOOST_FOREACH( SourceDocument& doc, docs )
-   {
-      // Force dirty state to be checked.
-      // Client and server dirty state can get out of sync because
-      // undo/redo on the client side can make dirty documents
-      // become clean again. I tried pushing the client dirty state
-      // back to the server but couldn't convince myself that I
-      // got all the edge cases. This approach is simpler--just
-      // compare the contents in the doc database to the contents
-      // on disk, and only do it when listing documents. However
-      // it does mean that reloading the client may cause a dirty
-      // document to become clean (if the contents are identical
-      // to what's on disk).
-      error = doc.updateDirty();
-      if (error)
-         LOG_ERROR(error);
-
-      json::Object jsonDoc ;
-      doc.writeToJson(&jsonDoc);
-      pJsonDocs->push_back(jsonDoc);
-   }
-   
-   return Success();
-}
-      
 Error initialize()
 {
    // make sure the source database exists

@@ -1,7 +1,7 @@
 @eval fixedWidthFont org.rstudio.core.client.theme.ThemeFonts.getFixedWidthFont();
 
 
-@def selectionBorderWidth 2px;
+@def selectionBorderWidth 1px;
 
 
 span.status {
@@ -13,6 +13,8 @@ span.status img:first-child {
 
 .cellTableWidget {
    font-size: 9pt;
+   background-color: white;
+   outline: none;
 }
 
 .cellTableFirstColumn {
@@ -96,7 +98,6 @@ span.status img:first-child {
 
 .cellTableSortableHeader {
   cursor: pointer;
-  cursor: hand;
 }
 
 .cellTableSortableHeader:hover {
@@ -140,16 +141,22 @@ span.status img:first-child {
 
 
 .cellTableKeyboardSelectedRow {
-  background: #ffc;
 }
 
 .cellTableKeyboardSelectedRowCell {
-  border: selectionBorderWidth solid #ffc;
+   border-top: 1px dotted gray !important;
+   border-bottom: 1px dotted gray !important;
+}
+.cellTableKeyboardSelectedRowCell:first-child {
+   border-left: 1px dotted gray;
+}
+.cellTableKeyboardSelectedRowCell:first-child + td + td {
+   border-right: 1px dotted gray;
 }
 
 .cellTableSelectedRow {
   /* CHANGE: use same selected background color as History table */
-  background: rgb(146, 193, 240);
+  background: #CCC;
   /* color: white; */
   height: auto;
   overflow: auto;
@@ -157,7 +164,14 @@ span.status img:first-child {
 
 .cellTableSelectedRowCell {
   /* CHANGE: use same selected background color as History table */
-  border: selectionBorderWidth solid rgb(146, 193, 240);
+  border: selectionBorderWidth solid #CCC;
+}
+
+.cellTableWidget:focus .cellTableSelectedRow {
+  background: rgb(146, 193, 240);
+}
+.cellTableWidget:focus .cellTableSelectedRowCell {
+  border-color: rgb(146, 193, 240);
 }
 
 /**

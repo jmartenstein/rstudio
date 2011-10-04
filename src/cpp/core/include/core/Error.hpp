@@ -123,6 +123,10 @@ Error systemError(int value,
                   const ErrorLocation& location) ;
 
 Error fileExistsError(const ErrorLocation& location);
+Error fileNotFoundError(const ErrorLocation& location);
+Error fileNotFoundError(const std::string& path,
+                        const ErrorLocation& location);
+
 Error pathNotFoundError(const ErrorLocation& location);
 Error pathNotFoundError(const std::string& path,
                         const ErrorLocation& location);
@@ -132,7 +136,7 @@ class ErrorLocation
 {
 public:
    ErrorLocation() ;
-   ErrorLocation(const char* function, const char* file, int line) ;
+   ErrorLocation(const char* function, const char* file, long line) ;
    virtual ~ErrorLocation() ;
    
    // immutable - copying and assignment via shared_ptr 
@@ -141,7 +145,7 @@ public:
 
    const std::string& function() const ;
    const std::string& file() const ;
-   int line() const ;
+   long line() const ;
    
    std::string asString() const;
    

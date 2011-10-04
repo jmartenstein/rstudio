@@ -48,9 +48,18 @@ struct DisplaySize
    }
 };
 
+typedef boost::function<void(double*,double*)> UnitConversionFunction;
+
+struct UnitConversionFunctions
+{
+   UnitConversionFunction deviceToUser;
+   UnitConversionFunction deviceToNDC;
+};
+
 struct GraphicsDeviceFunctions
 {
    boost::function<DisplaySize()> displaySize;
+   UnitConversionFunctions convert;
    boost::function<core::Error(const core::FilePath&,
                                const core::FilePath&)> saveSnapshot;
    boost::function<core::Error(const core::FilePath&)> restoreSnapshot;

@@ -16,15 +16,15 @@
 
 namespace core {
    class Error;
+   class FilePath;
 }
  
 namespace session {
 namespace modules {      
 namespace files {
-
-void pauseDirectoryMonitor();
-void resumeDirectoryMonitor();
    
+bool isMonitoringDirectory(const core::FilePath& directory);
+
 core::Error initialize();
                        
 } // namespace files

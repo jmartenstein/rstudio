@@ -18,6 +18,11 @@ import org.rstudio.core.client.BrowseCap;
 
 public class KeyboardShortcut
 {
+   public KeyboardShortcut(int keycode)
+   {
+      this(KeyboardShortcut.NONE, keycode);
+   }
+   
    public KeyboardShortcut(int modifiers, int keycode)
    {
       modifiers_ = modifiers;
@@ -95,6 +100,8 @@ public class KeyboardShortcut
          return "`";
       else if (keycode_ == 190)
          return ".";
+      else if (keycode_ >= 112 && keycode_ <= 123)
+         return "F" + (keycode_ - 111);
 
       return Character.toUpperCase((char)keycode_) + "";
    }

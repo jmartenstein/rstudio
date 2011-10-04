@@ -13,6 +13,9 @@
 
 #include "SessionModuleContextInternal.hpp"
 
+#include <vector>
+
+#include <boost/assert.hpp>
 #include <boost/utility.hpp>
 #include <boost/signal.hpp>
 #include <boost/numeric/conversion/cast.hpp>
@@ -25,10 +28,12 @@
 #include <core/Settings.hpp>
 #include <core/DateTime.hpp>
 #include <core/FileSerializer.hpp>
+#include <core/IncrementalCommand.hpp>
 
 #include <core/http/Util.hpp>
 
 #include <core/system/Process.hpp>
+#include <core/system/FileMonitor.hpp>
 #include <core/system/FileChangeEvent.hpp>
 
 #include <r/RSexp.hpp>
@@ -49,6 +54,8 @@
 #include <session/projects/SessionProjects.hpp>
 
 #include "modules/SessionContentUrls.hpp"
+#include "modules/SessionSourceControl.hpp"
+#include "modules/SessionFiles.hpp"
 
 #include "config.h"
 
@@ -367,6 +374,123 @@ void onResumed(const Settings& persistentState)
    s_suspendHandlers.resume(persistentState);
 }
 
+// idle work
+
+namespace {
+
+typedef std::vector<boost::shared_ptr<IncrementalCommand> >
+                                                      IncrementalCommands;
+IncrementalCommands s_incrementalCommands;
+IncrementalCommands s_idleIncrementalCommands;
+
+void addIncrementalCommand(boost::shared_ptr<IncrementalCommand> pCommand,
+                           bool idleOnly)
+{
+   if (idleOnly)
+      s_idleIncrementalCommands.push_back(pCommand);
+   else
+      s_incrementalCommands.push_back(pCommand);
+}
+
+void executeIncrementalCommands(IncrementalCommands* pCommands)
+{
+   // execute all commands
+   std::for_each(pCommands->begin(),
+                 pCommands->end(),
+                 boost::bind(&IncrementalCommand::execute, _1));
+
+   // remove any commands which are finished
+   pCommands->erase(
+                 std::remove_if(
+                    pCommands->begin(),
+                    pCommands->end(),
+                    boost::bind(&IncrementalCommand::finished, _1)),
+                 pCommands->end());
+}
+
+
+} // anonymous namespace
+
+void scheduleIncrementalWork(
+         const boost::posix_time::time_duration& incrementalDuration,
+         const boost::function<bool()>& execute,
+         bool idleOnly)
+{
+   addIncrementalCommand(boost::shared_ptr<IncrementalCommand>(
+                           new IncrementalCommand(incrementalDuration,
+                                                  execute)),
+                         idleOnly);
+}
+
+void scheduleIncrementalWork(
+         const boost::posix_time::time_duration& initialDuration,
+         const boost::posix_time::time_duration& incrementalDuration,
+         const boost::function<bool()>& execute,
+         bool idleOnly)
+{
+   addIncrementalCommand(boost::shared_ptr<IncrementalCommand>(
+                           new IncrementalCommand(initialDuration,
+                                                  incrementalDuration,
+                                                  execute)),
+                         idleOnly);
+}
+
+
+void scheduleIncrementalCommand(
+                  boost::shared_ptr<core::IncrementalCommand> pCommand,
+                  bool idleOnly)
+{
+   if (idleOnly)
+      s_idleIncrementalCommands.push_back(pCommand);
+   else
+      s_incrementalCommands.push_back(pCommand);
+}
+
+
+void onBackgroundProcessing(bool isIdle)
+{
+   // allow process supervisor to poll for events
+   processSupervisor().poll();
+
+   // check for file monitor changes
+   core::system::file_monitor::checkForChanges();
+
+   // fire event
+   events().onBackgroundProcessing(isIdle);
+
+   // execute incremental commands
+   executeIncrementalCommands(&s_incrementalCommands);
+   if (isIdle)
+      executeIncrementalCommands(&s_idleIncrementalCommands);
+}
+
+Error readAndDecodeFile(const FilePath& filePath,
+                        const std::string& encoding,
+                        bool allowSubstChars,
+                        std::string* pContents)
+{
+   // read contents
+   std::string encodedContents;
+   Error error = readStringFromFile(filePath, &encodedContents,
+                                    options().sourceLineEnding());
+
+   if (error)
+      return error ;
+
+   error = r::util::iconvstr(encodedContents, encoding, "UTF-8",
+                             allowSubstChars, pContents);
+   if (error)
+      return error;
+
+   stripBOM(pContents);
+
+   // Detect invalid UTF-8 sequences and recover
+   error = string_utils::utf8Clean(pContents->begin(),
+                                   pContents->end(),
+                                   '?');
+   return error ;
+}
+
 FilePath userHomePath()
 {
    return session::options().userHomePath();
@@ -463,22 +587,99 @@ void enqueClientEvent(const ClientEvent& event)
    session::clientEventQueue().add(event);
 }
 
+bool isDirectoryMonitored(const FilePath& directory)
+{
+   return session::projects::projectContext().isMonitoringDirectory(directory) ||
+          session::modules::files::isMonitoringDirectory(directory);
+}
+
+bool fileListingFilter(const core::FileInfo& fileInfo)
+{
+   // check extension for special file types which are always visible
+   core::FilePath filePath(fileInfo.absolutePath());
+   std::string ext = filePath.extensionLowerCase();
+   if (ext == ".rprofile" ||
+       ext == ".rdata"    ||
+       ext == ".rhistory" ||
+       ext == ".renviron" ||
+       ext == ".gitignore")
+   {
+      return true;
+   }
+   else
+   {
+      return !filePath.isHidden();
+   }
+}
+
+namespace {
 // enque file changed event
 void enqueFileChangedEvent(const core::system::FileChangeEvent& event,
-                           const std::string& vcsStatus)
+                           const modules::source_control::VCSStatus& vcsStatus)
 {
    // create file change object
    json::Object fileChange ;
    fileChange["type"] = event.type();
    json::Object fileSystemItem = createFileSystemItem(event.fileInfo());
-   fileSystemItem["vcs_status"] = vcsStatus;
+   json::Object vcsObj;
+   Error error = modules::source_control::statusToJson(
+         FilePath(event.fileInfo().absolutePath()), vcsStatus, &vcsObj);
+   if (error)
+      LOG_ERROR(error);
+   fileSystemItem["vcs_status"] = vcsObj;
    fileChange["file"] = fileSystemItem;
 
    // enque it
    ClientEvent clientEvent(client_events::kFileChanged, fileChange);
    module_context::enqueClientEvent(clientEvent);
 }
+} // namespace
 
+void enqueFileChangedEvent(const core::system::FileChangeEvent &event)
+{
+   modules::source_control::VCSStatus vcsStatus;
+   Error error = modules::source_control::fileStatus(
+         FilePath(event.fileInfo().absolutePath()), &vcsStatus);
+   if (error)
+      LOG_ERROR(error);
+   enqueFileChangedEvent(event, vcsStatus);
+}
+
+void enqueFileChangedEvents(const core::FilePath& vcsStatusRoot,
+                            const std::vector<core::system::FileChangeEvent>& events)
+{
+   using modules::source_control::VCSStatus;
+
+   if (events.empty())
+      return;
+
+   // try to find the common parent of the events
+   FilePath commonParentPath = FilePath(events.front().fileInfo().absolutePath()).parent();
+   BOOST_FOREACH(const core::system::FileChangeEvent& event, events)
+   {
+      // if not within the common parent then revert to the vcs status root
+      if (!FilePath(event.fileInfo().absolutePath()).isWithin(commonParentPath))
+      {
+         commonParentPath = vcsStatusRoot;
+         break;
+      }
+   }
+
+   // get vcs status in one shot
+   session::modules::source_control::StatusResult statusResult;
+   Error error = session::modules::source_control::status(commonParentPath,
+                                                          &statusResult);
+   if (error)
+      LOG_ERROR(error);
+
+   // fire client events as necessary
+   BOOST_FOREACH(const core::system::FileChangeEvent& event, events)
+   {
+      core::FilePath filePath(event.fileInfo().absolutePath());
+      VCSStatus vcsStatus = statusResult.getStatus(filePath);
+      enqueFileChangedEvent(event, vcsStatus);
+   }
+}
 
 // NOTE: we used to call explicitly back into r::session to write output
 // and errors however the fact that these functions are called from

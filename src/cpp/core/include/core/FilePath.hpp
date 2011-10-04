@@ -22,6 +22,7 @@
 #include <iosfwd>
 
 #include <boost/shared_ptr.hpp>
+#include <boost/scoped_ptr.hpp>
 #include <boost/function.hpp>
 
 #include <boost/utility.hpp>
@@ -70,6 +71,9 @@ public:
 
    // does this file exist?
    bool exists() const;
+
+   // is the file a symlink?
+   bool isSymlink() const;
 
    // size of file in bytes
    uintmax_t size() const;
@@ -161,6 +165,9 @@ public:
    bool operator < (const FilePath& other) const ;
 
 private:
+   friend class RecursiveDirectoryIterator;
+
+private:
    struct Impl ;
    boost::shared_ptr<const Impl> pImpl_ ;
 };
@@ -191,6 +198,20 @@ public:
    }
 private:
    FilePath restorePath_ ;
+};
+
+class RecursiveDirectoryIterator : boost::noncopyable
+{
+public:
+   explicit RecursiveDirectoryIterator(const FilePath& filePath);
+   virtual ~RecursiveDirectoryIterator();
+
+   Error next(FilePath* pFilePath);
+   bool finished() const;
+
+private:
+   struct Impl;
+   boost::scoped_ptr<Impl> pImpl_;
 };
 
 }

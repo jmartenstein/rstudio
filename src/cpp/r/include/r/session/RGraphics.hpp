@@ -94,7 +94,7 @@ public:
    // display
    virtual bool hasOutput() const = 0 ;
    virtual bool hasChanges() const = 0 ;
-   virtual void render(boost::function<void(DisplayState)> outputFunction)=0; 
+   virtual void render(boost::function<void(DisplayState)> outputFunction)=0;
    virtual std::string imageFilename() const = 0 ;
    virtual void refresh() = 0;
 
@@ -109,6 +109,7 @@ public:
 
    // set manipulator values
    virtual void setPlotManipulatorValues(const core::json::Object& values) = 0;
+   virtual void manipulatorPlotClicked(int x, int y) = 0;
 
    // notify that we are about to execute code
    virtual void onBeforeExecute() = 0;

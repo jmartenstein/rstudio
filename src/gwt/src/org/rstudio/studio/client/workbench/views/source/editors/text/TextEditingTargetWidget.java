@@ -36,8 +36,8 @@ import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.source.PanelWithToolbar;
+import org.rstudio.studio.client.workbench.views.source.editors.EditingTargetToolbar;
 import org.rstudio.studio.client.workbench.views.source.editors.text.TextEditingTarget.Display;
-import org.rstudio.studio.client.workbench.views.source.editors.text.TextEditingTarget.DocDisplay;
 import org.rstudio.studio.client.workbench.views.source.editors.text.findreplace.FindReplace;
 import org.rstudio.studio.client.workbench.views.source.editors.text.findreplace.FindReplaceBar;
 import org.rstudio.studio.client.workbench.views.source.editors.text.status.StatusBar;
@@ -70,8 +70,8 @@ public class TextEditingTargetWidget
 
    private Toolbar createToolbar()
    {
-      Toolbar toolbar = new Toolbar();
-      
+      Toolbar toolbar = new EditingTargetToolbar(commands_);
+       
       toolbar.addLeftWidget(commands_.saveSourceDoc().createToolbarButton());
       toolbar.addLeftWidget(sourceOnSave_);
 
@@ -156,8 +156,11 @@ public class TextEditingTargetWidget
          ImageResource icon = ThemeResources.INSTANCE.codeTransform();
 
          ToolbarPopupMenu menu = new ToolbarPopupMenu();
+         menu.addItem(commands_.goToFunctionDefinition().createMenuItem(false));
+         menu.addSeparator();
          menu.addItem(commands_.extractFunction().createMenuItem(false));
          menu.addItem(commands_.commentUncomment().createMenuItem(false));
+         menu.addItem(commands_.reindent().createMenuItem(false));
          codeTransform_ = new ToolbarButton("", icon, menu);
          codeTransform_.setTitle("Code Tools");
       }

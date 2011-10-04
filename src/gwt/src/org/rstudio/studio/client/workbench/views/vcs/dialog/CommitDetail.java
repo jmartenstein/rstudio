@@ -1,3 +1,15 @@
+/*
+ * CommitDetail.java
+ *
+ * Copyright (C) 2009-11 by RStudio, Inc.
+ *
+ * This program is licensed to you under the terms of version 3 of the
+ * GNU Affero General Public License. This program is distributed WITHOUT
+ * ANY EXPRESS OR IMPLIED WARRANTY, INCLUDING THOSE OF NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. Please refer to the
+ * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
+ *
+ */
 package org.rstudio.studio.client.workbench.views.vcs.dialog;
 
 import com.google.gwt.core.client.GWT;
@@ -12,15 +24,11 @@ import com.google.gwt.uibinder.client.UiField;
 import com.google.gwt.user.client.ui.*;
 import org.rstudio.core.client.Invalidation;
 import org.rstudio.core.client.Invalidation.Token;
-import org.rstudio.core.client.Pair;
 import org.rstudio.core.client.Point;
 import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.studio.client.common.vcs.VCSServerOperations.PatchMode;
 import org.rstudio.studio.client.workbench.views.vcs.dialog.HistoryPresenter.CommitDetailDisplay;
-import org.rstudio.studio.client.workbench.views.vcs.diff.ChunkOrLine;
-import org.rstudio.studio.client.workbench.views.vcs.diff.DiffChunk;
-import org.rstudio.studio.client.workbench.views.vcs.diff.LineTableView;
-import org.rstudio.studio.client.workbench.views.vcs.diff.UnifiedParser;
+import org.rstudio.studio.client.workbench.views.vcs.diff.*;
 
 import java.util.ArrayList;
 
@@ -52,6 +60,7 @@ public class CommitDetail extends Composite implements CommitDetailDisplay
    public void clearDetails()
    {
       invalidation_.invalidate();
+      tocPanel_.clear();
       detailPanel_.clear();
    }
 
@@ -68,8 +77,8 @@ public class CommitDetail extends Composite implements CommitDetailDisplay
             if (token.isInvalid())
                return false;
 
-            Pair<String, String> filePair = unifiedParser.nextFilePair();
-            if (filePair == null)
+            DiffFileHeader fileHeader = unifiedParser.nextFilePair();
+            if (fileHeader == null)
                return false;
 
             LineTableView view = new LineTableView();
@@ -80,15 +89,15 @@ public class CommitDetail extends Composite implements CommitDetailDisplay
             {
                lines.addAll(ChunkOrLine.fromChunk(chunk));
             }
-            view.setShowActions(false);
             view.setData(lines, PatchMode.Stage);
             view.setWidth("100%");
 
-            final DiffFrame diffFrame = new DiffFrame(null, filePair.first, null, view);
+            final DiffFrame diffFrame = new DiffFrame(
+                  null, fileHeader.getDescription(), null, view);
             diffFrame.setWidth("100%");
             detailPanel_.add(diffFrame);
 
-            Anchor tocAnchor = new Anchor(filePair.first);
+            Anchor tocAnchor = new Anchor(fileHeader.getDescription());
             tocAnchor.addClickHandler(new ClickHandler()
             {
                @Override
@@ -111,8 +120,11 @@ public class CommitDetail extends Composite implements CommitDetailDisplay
    {
       labelId_.setText(commit_.getId());
       labelAuthor_.setText(commit_.getAuthor());
-      labelDate_.setText(DateTimeFormat.getFormat(
-            PredefinedFormat.DATE_SHORT).format(commit_.getDate()));
+      labelDate_.setText(
+            DateTimeFormat.getFormat(PredefinedFormat.DATE_SHORT).format(commit_.getDate()) +
+            " " +
+            DateTimeFormat.getFormat(PredefinedFormat.TIME_SHORT).format(commit_.getDate())
+      );
       labelSubject_.setText(commit_.getSubject());
       labelParent_.setText(commit_.getParent());
    }

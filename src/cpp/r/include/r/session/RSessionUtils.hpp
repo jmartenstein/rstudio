@@ -17,13 +17,14 @@
 #include <string>
 
 namespace core {
+   class Error;
    class FilePath;
 }
 
 namespace r {
 namespace session {
 namespace utils {
-   
+      
 // user home path
 const core::FilePath& userHomePath();  
 
@@ -33,7 +34,6 @@ core::FilePath tempFile(const std::string& prefix,
                         const std::string& extension);
 
 core::FilePath tempDir();
-
      
 } // namespace utils
 } // namespace session

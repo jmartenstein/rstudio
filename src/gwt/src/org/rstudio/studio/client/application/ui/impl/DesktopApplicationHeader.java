@@ -109,7 +109,10 @@ public class DesktopApplicationHeader implements ApplicationHeader
          }
       });
       
-      toolbar_ = new GlobalToolbar(commands, fileTypeCommands, pCodeSearch);
+      toolbar_ = new GlobalToolbar(commands, 
+                                   fileTypeCommands, 
+                                   events, 
+                                   pCodeSearch);
       ThemeStyles styles = ThemeResources.INSTANCE.themeStyles(); 
       toolbar_.addStyleName(styles.desktopGlobalToolbar());
    }
@@ -117,6 +120,16 @@ public class DesktopApplicationHeader implements ApplicationHeader
    public void showToolbar(boolean showToolbar)
    {
       toolbar_.setVisible(showToolbar);
+   }
+   
+   public boolean isToolbarVisible()
+   {
+      return toolbar_.isVisible();
+   }
+   
+   public void focusGoToFunction()
+   {
+      toolbar_.focusGoToFunction();
    }
 
    @Handler

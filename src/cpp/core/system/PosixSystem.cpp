@@ -41,11 +41,14 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileInfo.hpp>
 #include <core/FileLogWriter.hpp>
 #include <core/Exec.hpp>
 #include <core/SyslogLogWriter.hpp>
+#include <core/StderrLogWriter.hpp>
 
 #include <core/system/ProcessArgs.hpp>
+#include <core/system/Environment.hpp>
 
 #include "config.h"
 
@@ -147,6 +150,14 @@ void initializeSystemLog(const std::string& programIdentity, int logLevel)
       delete s_pLogWriter;
 
    s_pLogWriter = new SyslogLogWriter(programIdentity, logLevel);
+}
+
+void initializeStderrLog(const std::string& programIdentity, int logLevel)
+{
+   if (s_pLogWriter)
+      delete s_pLogWriter;
+
+   s_pLogWriter = new StderrLogWriter(programIdentity, logLevel);
 }
 
 void initializeLog(const std::string& programIdentity,
@@ -354,25 +365,6 @@ Error useDefaultSignalHandler(SignalType signal)
       return Success();
    }
 }
-   
-std::string getenv(const std::string& name)
-{
-   char * value = ::getenv(name.c_str());
-   if (value)
-      return std::string(value);
-   else
-      return std::string();
-}
-   
-void setenv(const std::string& name, const std::string& value)
-{
-   ::setenv(name.c_str(), value.c_str(), 1);
-}
-
-void unsetenv(const std::string& name)
-{
-	::unsetenv(name.c_str());
-}
 
 std::string username()
 {
@@ -508,6 +500,11 @@ bool isHiddenFile(const FilePath& filePath)
    std::string filename = filePath.filename() ;
    return (!filename.empty() && (filename[0] == '.')) ;
 }  
+
+bool isHiddenFile(const FileInfo& fileInfo)
+{
+   return isHiddenFile(FilePath(fileInfo.absolutePath()));
+}
    
 bool stderrIsTerminal()
 {
@@ -602,6 +599,13 @@ void abort()
 	::abort();
 }
 
+Error terminateProcess(PidType pid)
+{
+   if (::kill(pid, SIGTERM))
+      return systemError(errno, ERROR_LOCATION);
+   else
+      return Success();
+}
 
 } // namespace system
 } // namespace core

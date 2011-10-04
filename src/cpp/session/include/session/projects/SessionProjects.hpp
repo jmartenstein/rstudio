@@ -14,28 +14,53 @@
 #ifndef SESSION_PROJECTS_PROJECTS_HPP
 #define SESSION_PROJECTS_PROJECTS_HPP
 
+#include <vector>
+#include <map>
 
 #include <boost/utility.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/foreach.hpp>
+#include <boost/signals.hpp>
 
+#include <core/FileInfo.hpp>
 #include <core/FilePath.hpp>
 
-#include <core/r_util/RProjectFile.hpp>
+#include <core/system/FileMonitor.hpp>
+#include <core/system/FileChangeEvent.hpp>
 
+#include <core/json/Json.hpp>
+
+#include <core/collection/Tree.hpp>
+
+#include <core/r_util/RProjectFile.hpp>
 #include <core/r_util/RSourceIndex.hpp>
  
 namespace session {
 namespace projects {
 
+
+// file monitoring callbacks (all callbacks are optional)
+struct FileMonitorCallbacks
+{
+   boost::function<void(const tree<core::FileInfo>&)> onMonitoringEnabled;
+   boost::function<void(
+         const std::vector<core::system::FileChangeEvent>&)> onFilesChanged;
+   boost::function<void()> onMonitoringDisabled;
+};
+
 class ProjectContext : boost::noncopyable
 {
 public:
-   ProjectContext() {}
+   ProjectContext()
+      : hasFileMonitor_(false)
+   {
+   }
    virtual ~ProjectContext() {}
 
-   core::Error initialize(const core::FilePath& projectFile,
-                          std::string* pUserErrMsg);
+   core::Error startup(const core::FilePath& projectFile,
+                       std::string* pUserErrMsg);
+
+   core::Error initialize();
 
 public:
    bool hasProject() const { return !file_.empty(); }
@@ -50,14 +75,64 @@ public:
       config_ = config;
    }
 
+   // code which needs to rely on the encoding should call this method
+   // rather than getting the encoding off of the config (because the
+   // config could have been created on another system with an encoding
+   // not available here -- defaultEncoding reflects (if possible) a
+   // local mapping of an unknown encoding and a fallback to UTF-8
+   // if necessary
+   std::string defaultEncoding() const;
+
+   core::json::Object uiPrefs() const;
+
+   // does this project context have a file monitor? (might not have one
+   // if the user has disabled code indexing or if file monitoring failed
+   // for this path)
+   bool hasFileMonitor() const { return hasFileMonitor_; }
+
+   // are we monitoring the specified directory? (used by other modules to
+   // suppress file monitoring if the project already has it covered)
+   bool isMonitoringDirectory(const core::FilePath& directory) const;
+
+   // subscribe to file monitor notifications -- note that to ensure
+   // receipt of the onMonitoringEnabled callback subscription should
+   // occur during module initialization
+   void subscribeToFileMonitor(const std::string& featureName,
+                               const FileMonitorCallbacks& cb);
+
+public:
+   static core::r_util::RProjectConfig defaultConfig();
+
+private:
+   // deferred init handler (this allows other modules to reliably subscribe
+   // to our file monitoring events with no concern that they'll miss
+   // onMonitoringEnabled)
+   void onDeferredInit();
+
+   // file monitor event handlers
+   void fileMonitorRegistered(core::system::file_monitor::Handle handle,
+                              const tree<core::FileInfo>& files);
+   void fileMonitorFilesChanged(
+                   const std::vector<core::system::FileChangeEvent>& events);
+   void fileMonitorTermination(const core::Error& error);
+
 private:
    core::FilePath file_;
    core::FilePath directory_;
    core::FilePath scratchPath_;
    core::r_util::RProjectConfig config_;
+   std::string defaultEncoding_;
+
+   bool hasFileMonitor_;
+   std::vector<std::string> monitorSubscribers_;
+   boost::signal<void(const tree<core::FileInfo>&)> onMonitoringEnabled_;
+   boost::signal<void(const std::vector<core::system::FileChangeEvent>&)>
+                                                            onFilesChanged_;
+   boost::signal<void()> onMonitoringDisabled_;
 };
 
-const ProjectContext& projectContext();
+ProjectContext& projectContext();
+
 
 } // namespace projects
 } // namesapce session

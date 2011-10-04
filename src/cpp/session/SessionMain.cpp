@@ -29,6 +29,7 @@
 #include <boost/signals.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/join.hpp>
 
 #include <core/Error.hpp>
 #include <core/BoostThread.hpp>
@@ -49,7 +50,9 @@
 #include <core/gwt/GwtLogHandler.hpp>
 #include <core/gwt/GwtFileHandler.hpp>
 #include <core/system/Process.hpp>
+#include <core/system/Environment.hpp>
 #include <core/system/ParentProcessMonitor.hpp>
+#include <core/system/FileMonitor.hpp>
 #include <core/text/TemplateFilter.hpp>
 
 #include <r/RJsonRpc.hpp>
@@ -81,6 +84,7 @@
 #include "modules/SessionAgreement.hpp"
 #include "modules/SessionCodeSearch.hpp"
 #include "modules/SessionConsole.hpp"
+#include "modules/SessionConsoleProcess.hpp"
 #include "modules/SessionDiff.hpp"
 #include "modules/SessionFiles.hpp"
 #include "modules/SessionWorkspace.hpp"
@@ -111,22 +115,25 @@ using namespace session;
 using namespace session::client_events;
 
 namespace {
-   
-// background processing signal
-boost::signal<void()> s_onBackgroundProcessing;
 
 // uri handlers
 http::UriHandlers s_uriHandlers;
 http::UriHandlerFunction s_defaultUriHandler;
 
 // json rpc methods
-core::json::JsonRpcMethods s_jsonRpcMethods;
+core::json::JsonRpcAsyncMethods s_jsonRpcMethods;
    
 // R browseUrl handlers
 std::vector<module_context::RBrowseUrlHandler> s_rBrowseUrlHandlers;
    
 // R browseFile handlers
 std::vector<module_context::RBrowseFileHandler> s_rBrowseFileHandlers;
+
+// names of waitForMethod handlers (used to screen out of bkgnd processing)
+std::vector<std::string> s_waitForMethodNames;
+
+// last prompt we issued
+std::string s_lastPrompt;
 
 // have we fully initialized? used by rConsoleRead and clientInit to
 // tweak their behavior when the process is first starting
@@ -142,6 +149,11 @@ volatile sig_atomic_t s_rProcessingInput = 0;
 bool s_printCharsetWarning = false;
 
 std::queue<r::session::RConsoleInput> s_consoleInputBuffer;
+
+// superivsor is a module level static so that we can terminateChildren
+// upon exit of the session (otherwise we could leave a long running
+// sweave operation still hogging cpu after we exit)
+core::system::ProcessSupervisor s_interruptableChildSupervisor;
 
 // json rpc methods we handle (the rest are delegated to the HttpServer)
 const char * const kClientInit = "client_init" ;
@@ -354,7 +366,7 @@ void handleClientInit(const boost::function<void()>& initFunction,
    
    // source documents
    json::Array jsonDocs;
-   Error error = source_database::getSourceDocumentsJson(&jsonDocs);
+   Error error = modules::source::clientInitDocuments(&jsonDocs);
    if (error)
       LOG_ERROR(error);
    sessionInfo["source_documents"] = jsonDocs;
@@ -401,17 +413,23 @@ void handleClientInit(const boost::function<void()>& initFunction,
    {
       sessionInfo["active_project_file"] = module_context::createAliasedPath(
                               projects::projectContext().file());
+      sessionInfo["project_ui_prefs"] = projects::projectContext().uiPrefs();
    }
    else
    {
       sessionInfo["active_project_file"] = json::Value();
+      sessionInfo["project_ui_prefs"] = json::Value();
    }
 
    sessionInfo["system_encoding"] = std::string(::locale2charset(NULL));
 
+   std::vector<std::string> vcsAvailable;
+   if (modules::source_control::isGitInstalled())
+      vcsAvailable.push_back("git");
+   if (modules::source_control::isSvnInstalled())
+      vcsAvailable.push_back("svn");
+   sessionInfo["vcs_available"] = boost::algorithm::join(vcsAvailable, ",");
    sessionInfo["vcs"] = modules::source_control::activeVCSName();
-
-   sessionInfo["indexing_enabled"] = modules::code_search::enabled();
 
    // send response  (we always set kEventsPending to false so that the client
    // won't poll for events until it is ready)
@@ -436,6 +454,64 @@ enum ConnectionType
    BackgroundConnection
 };
 
+void endHandleRpcRequestDirect(boost::shared_ptr<HttpConnection> ptrConnection,
+                         boost::posix_time::ptime executeStartTime,
+                         const core::Error& executeError,
+                         json::JsonRpcResponse* pJsonRpcResponse)
+{
+   // return error or result then continue waiting for requests
+   if (executeError)
+   {
+      ptrConnection->sendJsonRpcError(executeError);
+   }
+   else
+   {
+      // allow modules to detect changes after rpc calls
+      if (!pJsonRpcResponse->suppressDetectChanges())
+         detectChanges(module_context::ChangeSourceRPC);
+
+      // are there (or will there likely be) events pending?
+      // (if not then notify the client)
+      if ( !clientEventQueue().eventAddedSince(executeStartTime) &&
+           !pJsonRpcResponse->hasAfterResponse() )
+      {
+         pJsonRpcResponse->setField(kEventsPending, "false");
+      }
+
+      // send the response
+      ptrConnection->sendJsonRpcResponse(*pJsonRpcResponse);
+
+      // run after response if we have one (then detect changes again)
+      if (pJsonRpcResponse->hasAfterResponse())
+      {
+         pJsonRpcResponse->runAfterResponse();
+         if (!pJsonRpcResponse->suppressDetectChanges())
+            detectChanges(module_context::ChangeSourceRPC);
+      }
+   }
+}
+
+void endHandleRpcRequestIndirect(
+      const std::string& asyncHandle,
+      const core::Error& executeError,
+      json::JsonRpcResponse* pJsonRpcResponse)
+{
+   json::JsonRpcResponse temp;
+   json::JsonRpcResponse& jsonRpcResponse =
+                                 pJsonRpcResponse ? *pJsonRpcResponse : temp;
+
+   BOOST_ASSERT(!jsonRpcResponse.hasAfterResponse());
+   if (executeError)
+   {
+      jsonRpcResponse.setError(executeError);
+   }
+   json::Object value;
+   value["handle"] = asyncHandle;
+   value["response"] = jsonRpcResponse.getRawResponse();
+   ClientEvent evt(client_events::kAsyncCompletion, value);
+   module_context::enqueClientEvent(evt);
+}
+
 void handleRpcRequest(const core::json::JsonRpcRequest& request,
                       boost::shared_ptr<HttpConnection> ptrConnection,
                       ConnectionType connectionType)
@@ -446,56 +522,52 @@ void handleRpcRequest(const core::json::JsonRpcRequest& request,
    ptime executeStartTime = microsec_clock::universal_time();
    
    // execute the method
-   Error executeError;
-   core::json::JsonRpcResponse jsonRpcResponse ;
-   if (connectionType == BackgroundConnection)
-      jsonRpcResponse.setSuppressDetectChanges(true);
-   json::JsonRpcMethods::const_iterator it = s_jsonRpcMethods.find(request.method);
+   json::JsonRpcAsyncMethods::const_iterator it =
+                                     s_jsonRpcMethods.find(request.method);
    if (it != s_jsonRpcMethods.end())
    {
-      json::JsonRpcFunction handlerFunction = it->second ;
-      executeError = handlerFunction(request, &jsonRpcResponse) ;
+      std::pair<bool, json::JsonRpcAsyncFunction> reg = it->second;
+      json::JsonRpcAsyncFunction handlerFunction = reg.second;
+
+      if (reg.first)
+      {
+         // direct return
+         handlerFunction(request,
+                         boost::bind(endHandleRpcRequestDirect,
+                                     ptrConnection,
+                                     executeStartTime,
+                                     _1,
+                                     _2));
+      }
+      else
+      {
+         // indirect return (asyncHandle style)
+         std::string handle = core::system::generateUuid(true);
+         json::JsonRpcResponse response;
+         response.setAsyncHandle(handle);
+         response.setField(kEventsPending, "false");
+         ptrConnection->sendJsonRpcResponse(response);
+
+         handlerFunction(request,
+                         boost::bind(endHandleRpcRequestIndirect,
+                                     handle,
+                                     _1,
+                                     _2));
+      }
    }
    else
    {
-      executeError = Error(json::errc::MethodNotFound, ERROR_LOCATION);
+      Error executeError = Error(json::errc::MethodNotFound, ERROR_LOCATION);
       executeError.addProperty("method", request.method);
 
       // we need to know about these because they represent unexpected
       // application states
       LOG_ERROR(executeError);
+
+      endHandleRpcRequestDirect(ptrConnection, executeStartTime, executeError, NULL);
    }
 
-   // return error or result then continue waiting for requests
-   if (executeError)
-   {
-      ptrConnection->sendJsonRpcError(executeError);
-   }
-   else
-   {
-      // allow modules to detect changes after rpc calls
-      if (!jsonRpcResponse.suppressDetectChanges())
-         detectChanges(module_context::ChangeSourceRPC);
-      
-      // are there (or will there likely be) events pending?
-      // (if not then notify the client)
-      if ( !clientEventQueue().eventAddedSince(executeStartTime) &&
-           !jsonRpcResponse.hasAfterResponse() )
-      {
-         jsonRpcResponse.setField(kEventsPending, "false");
-      }
-      
-      // send the response
-      ptrConnection->sendJsonRpcResponse(jsonRpcResponse);
-      
-      // run after response if we have one (then detect changes again)
-      if (jsonRpcResponse.hasAfterResponse())
-      {
-         jsonRpcResponse.runAfterResponse();
-         if (!jsonRpcResponse.suppressDetectChanges())
-            detectChanges(module_context::ChangeSourceRPC);
-      }
-   }
+
 }
 
 bool isMethod(const std::string& uri, const std::string& method)
@@ -515,6 +587,16 @@ bool isJsonRpcRequest(boost::shared_ptr<HttpConnection> ptrConnection)
                                         "/rpc/");
 }
 
+bool isWaitForMethodUri(const std::string& uri)
+{
+   BOOST_FOREACH(const std::string& methodName, s_waitForMethodNames)
+   {
+      if (isMethod(uri, methodName))
+         return true;
+   }
+
+   return false;
+}
 
 bool parseAndValidateJsonRpcConnection(
          boost::shared_ptr<HttpConnection> ptrConnection,
@@ -550,26 +632,32 @@ bool parseAndValidateJsonRpcConnection(
    return true;
 }
 
+void endHandleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
+                         ConnectionType connectionType,
+                         http::Response* pResponse)
+{
+   ptrConnection->sendResponse(*pResponse);
+   if (!s_rProcessingInput)
+      detectChanges(module_context::ChangeSourceURI);
+}
+
 void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
                       ConnectionType connectionType)
 {
    // check for a uri handler registered by a module
    const http::Request& request = ptrConnection->request();
    std::string uri = request.uri();
-   http::UriHandlerFunction uriHandler = s_uriHandlers.handlerFor(uri);
+   http::UriAsyncHandlerFunction uriHandler = s_uriHandlers.handlerFor(uri);
 
    if (uriHandler) // uri handler
    {
       // r code may execute - ensure session is initialized
       ensureSessionInitialized();
 
-      http::Response response;
-      uriHandler(request, &response);
-      ptrConnection->sendResponse(response);
-
-      // allow modules to check for changes after http requests
-      if (connectionType == ForegroundConnection)
-         detectChanges(module_context::ChangeSourceURI);
+      uriHandler(request, boost::bind(endHandleConnection,
+                                      ptrConnection,
+                                      connectionType,
+                                      _1));
    }
    else if (isJsonRpcRequest(ptrConnection)) // check for json-rpc
    {
@@ -619,6 +707,8 @@ void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
          // other rpc method, handle it
          else
          {
+            jsonRpcRequest.isBackgroundConnection =
+                  (connectionType == BackgroundConnection);
             handleRpcRequest(jsonRpcRequest, ptrConnection, connectionType);
          }
       }
@@ -653,13 +743,6 @@ void prepareFork()
    if (boost::this_thread::get_id() != s_mainThreadId)
       return;
 
-   // if the main thread is being forked then it could be multicore
-   // (or another package which works in the same way). we don't want
-   // file monitoring objects inherited by the forked multicore child
-   // so we pause file monitoring in the parent first. we'll resume
-   // after the fork in the atForkParent call below.
-   session::modules::files::pauseDirectoryMonitor();
-
 }
 
 void atForkParent()
@@ -667,8 +750,6 @@ void atForkParent()
    if (boost::this_thread::get_id() != s_mainThreadId)
       return;
 
-   // resume monitoring
-   session::modules::files::resumeDirectoryMonitor();
 }
 
 void atForkChild()
@@ -689,27 +770,6 @@ void setupForkHandlers()
 }
 #endif
 
-
-void performBackgroundProcessing()
-{
-   // static lastPerformed value used for throttling
-   using namespace boost::posix_time;
-   static ptime s_lastPerformed;
-   if (s_lastPerformed.is_not_a_date_time())
-      s_lastPerformed = microsec_clock::universal_time();
-
-   // throttle to no more than once every 25ms
-   static time_duration s_intervalMs = milliseconds(25);
-   if (microsec_clock::universal_time() > (s_lastPerformed + s_intervalMs))
-   {
-      // fire signal
-      s_onBackgroundProcessing();
-
-      // set last performed
-      s_lastPerformed = microsec_clock::universal_time();
-   }
-}
-
 void polledEventHandler()
 {
    // if R is getting called after a fork this is likely multicore or
@@ -725,8 +785,24 @@ void polledEventHandler()
       return;
    }
 
-   // perform background processing
-   performBackgroundProcessing();
+   // static lastPerformed value used for throttling
+   using namespace boost::posix_time;
+   static ptime s_lastPerformed;
+   if (s_lastPerformed.is_not_a_date_time())
+      s_lastPerformed = microsec_clock::universal_time();
+
+   // throttle to no more than once every 50ms
+   static time_duration s_intervalMs = milliseconds(50);
+   if (microsec_clock::universal_time() <= (s_lastPerformed + s_intervalMs))
+      return;
+
+   // notify modules
+   module_context::onBackgroundProcessing(false);
+
+   // set last performed (should be set after calling onBackgroundProcessing so
+   // that long running background processing handlers can't overflow the 50ms
+   // interval between background processing invocations)
+   s_lastPerformed = microsec_clock::universal_time();
 
    // check for a pending connections only while R is processing
    // (otherwise we'll handle them directly in waitForMethod)
@@ -738,13 +814,8 @@ void polledEventHandler()
 
       // if the uri is empty or if it one of our special waitForMethod calls
       // then bails so that the waitForMethod logic can handle it
-      if (nextConnectionUri.empty() ||
-          isMethod(nextConnectionUri, kLocatorCompleted) ||
-          isMethod(nextConnectionUri, kEditCompleted) ||
-          isMethod(nextConnectionUri, kChooseFileCompleted))
-      {
+      if (nextConnectionUri.empty() || isWaitForMethodUri(nextConnectionUri))
          return;
-      }
 
       // attempt to deque a connection and handle it. for now we just handle
       // a single connection at a time (we'll be called back again if processing
@@ -826,7 +897,8 @@ void suspendIfRequested(const boost::function<bool()>& allowSuspend)
 
 bool canSuspend(const std::string& prompt)
 {
-   return r::session::isSuspendable(prompt);
+   return !module_context::processSupervisor().hasRunningChildren()
+      && r::session::isSuspendable(prompt);
 }
 
 
@@ -919,8 +991,8 @@ bool waitForMethod(const std::string& method,
                                             connectionQueueTimeout);
 
 
-      // perform background processing
-      performBackgroundProcessing();
+      // perform background processing (true for isIdle)
+      module_context::onBackgroundProcessing(true);
 
       // process pending events in desktop mode
       processDesktopGuiEvents();
@@ -1122,7 +1194,9 @@ Error runPreflightScript()
             // the outcome of the script is)
             std::string script = preflightScriptPath.absolutePath();
             core::system::ProcessResult result;
-            Error error = runCommand(script, &result);
+            Error error = runCommand(script,
+                                     core::system::ProcessOptions(),
+                                     &result);
             if (error)
             {
                error.addProperty("preflight-script", script);
@@ -1146,6 +1220,11 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
    // save state we need to reference later
    s_rSessionResumed = rInitInfo.resumed;
    
+   // record built-in waitForMethod handlers
+   s_waitForMethodNames.push_back(kLocatorCompleted);
+   s_waitForMethodNames.push_back(kEditCompleted);
+   s_waitForMethodNames.push_back(kChooseFileCompleted);
+
    // execute core initialization functions
    using boost::bind;
    using namespace core::system;
@@ -1165,7 +1244,8 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       // main module context
       (module_context::initialize)
 
-      // projects
+      // projects (early project init required -- module inits below
+      // can then depend on e.g. computed defaultEncoding)
       (projects::initialize)
 
       // source database
@@ -1177,6 +1257,7 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       (modules::limits::initialize)
       (modules::agreement::initialize)
       (modules::console::initialize)
+      (modules::console_process::initialize)
       (modules::diff::initialize)
       (modules::files::initialize)
       (modules::workspace::initialize)
@@ -1221,7 +1302,10 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
    error = r::json::getRpcMethods(&rMethods);
    if (error)
       return error ;
-   s_jsonRpcMethods.insert(rMethods.begin(), rMethods.end());
+   BOOST_FOREACH(const json::JsonRpcMethod& method, rMethods)
+   {
+      s_jsonRpcMethods.insert(json::adaptMethodToAsync(method));
+   }
 
    // add gwt handlers if we are running desktop mode
    if (session::options().programMode() == kSessionProgramModeDesktop)
@@ -1249,11 +1333,6 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
    r::session::consoleHistory().setRemoveDuplicates(
                                  userSettings().removeHistoryDuplicates());
 
-   // connect ProcessSupervisor::poll to background processing
-   s_onBackgroundProcessing.connect(boost::bind(
-                              &core::system::ProcessSupervisor::poll,
-                              &module_context::processSupervisor()));
-
    // set flag indicating we had an abnormal end (if this doesn't get
    // unset by the time we launch again then we didn't terminate normally
    // i.e. either the process dying unexpectedly or a call to R_Suicide)
@@ -1273,6 +1352,9 @@ void rDeferredInit()
    
 void consolePrompt(const std::string& prompt, bool addToHistory)
 {
+   // save the last prompt (for re-issuing)
+   s_lastPrompt = prompt;
+
    // enque the event
    json::Object data ;
    data["prompt"] = prompt ;
@@ -1284,6 +1366,11 @@ void consolePrompt(const std::string& prompt, bool addToHistory)
    
    // allow modules to detect changes after execution of previous REPL
    detectChanges(module_context::ChangeSourceREPL);   
+}
+
+void reissueLastConsolePrompt()
+{
+   consolePrompt(s_lastPrompt, false);
 }
 
 bool rConsoleRead(const std::string& prompt,
@@ -1621,6 +1708,24 @@ void rSuicide(const std::string& message)
    session::clientEventQueue().add(suicideEvent);
 }
 
+// terminate all children of the provided process supervisor
+// and then wait a brief period to attempt to reap the child
+void terminateAllChildren(core::system::ProcessSupervisor* pSupervisor,
+                          const ErrorLocation& location)
+{
+   // send kill signal
+   pSupervisor->terminateAll();
+
+   // wait and reap children (but for no longer than 1 second)
+   if (!pSupervisor->wait(boost::posix_time::milliseconds(10),
+                          boost::posix_time::milliseconds(1000)))
+   {
+      core::log::logWarningMessage(
+            "Process supervisor did not terminate within 1 second",
+            location);
+   }
+}
+
 void rCleanup(bool terminatedNormally)
 {
    try
@@ -1652,6 +1757,12 @@ void rCleanup(bool terminatedNormally)
          clientEventService().stop();
          httpConnectionListener().stop();
       }
+
+      // terminate known child processes
+      terminateAllChildren(&s_interruptableChildSupervisor,
+                           ERROR_LOCATION);
+      terminateAllChildren(&module_context::processSupervisor(),
+                           ERROR_LOCATION);
    }
    CATCH_UNEXPECTED_EXCEPTION
 
@@ -1902,36 +2013,65 @@ Error registerRBrowseFileHandler(const RBrowseFileHandler& handler)
    s_rBrowseFileHandlers.push_back(handler);
    return Success();
 }
- 
-Error registerUriHandler(const std::string& name, 
-                         const http::UriHandlerFunction& handlerFunction)  
+
+Error registerAsyncUriHandler(
+                         const std::string& name,
+                         const http::UriAsyncHandlerFunction& handlerFunction)
 {
-   
+
    s_uriHandlers.add(http::UriHandler(name,
                                       handlerFunction));
    return Success();
 }
-   
-  
-Error registerLocalUriHandler(const std::string& name, 
+
+Error registerUriHandler(const std::string& name,
+                         const http::UriHandlerFunction& handlerFunction)
+{
+
+   s_uriHandlers.add(http::UriHandler(name,
+                                      handlerFunction));
+   return Success();
+}
+
+
+Error registerAsyncLocalUriHandler(
+                         const std::string& name,
+                         const http::UriAsyncHandlerFunction& handlerFunction)
+{
+   s_uriHandlers.add(http::UriHandler(kLocalUriLocationPrefix + name,
+                                      handlerFunction));
+   return Success();
+}
+
+Error registerLocalUriHandler(const std::string& name,
                               const http::UriHandlerFunction& handlerFunction)
 {
    s_uriHandlers.add(http::UriHandler(kLocalUriLocationPrefix + name,
                                       handlerFunction));
    return Success();
 }
-   
+
+
+Error registerAsyncRpcMethod(const std::string& name,
+                             const core::json::JsonRpcAsyncFunction& function)
+{
+   s_jsonRpcMethods.insert(
+         std::make_pair(name, std::make_pair(false, function)));
+   return Success();
+}
 
 Error registerRpcMethod(const std::string& name,
                         const core::json::JsonRpcFunction& function)
 {
-   s_jsonRpcMethods.insert(std::make_pair(name, function));
+   s_jsonRpcMethods.insert(
+         std::make_pair(name,
+                        std::make_pair(true, json::adaptToAsync(function))));
    return Success();
 }
 
 namespace {
 
-bool continueChildProcess()
+bool continueChildProcess(core::system::ProcessOperations&)
 {
    // pump events so we can actually receive an interrupt
    polledEventHandler();
@@ -1954,6 +2094,20 @@ bool continueChildProcess()
 Error executeInterruptableChild(const std::string& path,
                                 const std::vector<std::string>& args)
 {
+   // error if an interruptable child is already running (we can't
+   // marry more than one child process to the interrupt state without)
+   if (s_interruptableChildSupervisor.hasRunningChildren())
+   {
+      return systemError(boost::system::errc::device_or_resource_busy,
+                         ERROR_LOCATION);
+   }
+
+
+   // NOTE: we specify ProcessOptions::terminateChildren so that when
+   // the user interrupts the job then we end up killing both the
+   // child and all of its subprocesses (desirable for sweave so we
+   // can kill the underlying R executable as well).
+
    // setup callbacks
    core::system::ProcessCallbacks cb;
    cb.onStdout = boost::bind(rConsoleWrite, _2, 0);
@@ -1961,13 +2115,17 @@ Error executeInterruptableChild(const std::string& path,
    cb.onContinue = continueChildProcess;
 
    // run process with a supervisor
-   core::system::ProcessSupervisor supervisor;
-   Error error = supervisor.runProgram(path, args, cb);
+   core::system::ProcessOptions options;
+   options.terminateChildren = true;
+   Error error = s_interruptableChildSupervisor.runProgram(path,
+                                                           args,
+                                                           options,
+                                                           cb);
    if (error)
       return error;
 
-   // wait for process
-   supervisor.wait();
+   // wait for process (no timeout)
+   s_interruptableChildSupervisor.wait();
 
    return Success();
 }
@@ -2001,6 +2159,46 @@ void syncRSaveAction()
    r::session::setSaveAction(saveWorkspaceOption());
 }
 
+
+namespace {
+
+void waitForMethodInitFunction(const ClientEvent& initEvent)
+{
+   module_context::enqueClientEvent(initEvent);
+
+   if (s_rProcessingInput)
+   {
+      ClientEvent busyEvent(client_events::kBusy, true);
+      module_context::enqueClientEvent(busyEvent);
+   }
+   else
+   {
+      reissueLastConsolePrompt();
+   }
+}
+
+bool registeredWaitForMethod(const std::string& method,
+                             const ClientEvent& event,
+                             core::json::JsonRpcRequest* pRequest)
+{
+   // enque the event which notifies the client we want input
+   module_context::enqueClientEvent(event);
+
+   // wait for method
+   return waitForMethod(method,
+                        boost::bind(waitForMethodInitFunction, event),
+                        disallowSuspend,
+                        pRequest);
+}
+
+} // anonymous namepace
+
+WaitForMethodFunction registerWaitForMethod(const std::string& methodName,
+                                            const ClientEvent& event)
+{
+   s_waitForMethodNames.push_back(methodName);
+   return boost::bind(registeredWaitForMethod, methodName, event, _1);
+}
 
 } // namespace module_context
 } // namespace session
@@ -2130,6 +2328,11 @@ int main (int argc, char * const argv[])
       // username in debug configurations). this is provided so that 
       // rpostback knows what local stream to connect back to
       core::system::setenv(kRStudioUserIdentity, options.userIdentity());
+      if (desktopMode)
+      {
+         // do the same for port number, for rpostback in rdesktop configs
+         core::system::setenv(kRSessionPortNumber, options.wwwPort());
+      }
            
       // ensure we aren't being started as a low (priviliged) account
       if (serverMode &&
@@ -2138,8 +2341,11 @@ int main (int argc, char * const argv[])
          Error error = systemError(boost::system::errc::permission_denied,
                                    ERROR_LOCATION);
          return sessionExitFailure(error, ERROR_LOCATION);
-      }   
-      
+      }
+
+      // start the file monitor
+      core::system::file_monitor::initialize();
+
       // initialize client event queue. this must be done very early
       // in main so that any other code which needs to enque an event
       // has access to the queue

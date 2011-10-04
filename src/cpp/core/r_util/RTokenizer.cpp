@@ -21,17 +21,18 @@
 #include <core/Log.hpp>
 #include <core/StringUtils.hpp>
 
-// TODO: look into race condition of results from first letter being
-//       displayed after results from second letter are displayed (more
-//       common in low latency situations)
 
-// TODO: sync source documents
-// TODO: include files in the query
+// TODO: implement file monitoring
 
-// TODO: open with project-level encoding & convert to UTF-8 / wide
+// TODO: some type of cap on number of files or directories? (or just
+// have searches be really slow for that case?)
 
-// TODO: indexing queue
-// TODO: limit indexing for cases of thousands (or hundreds) of files
+// TODO: once we have file monitoring the source database will only
+//       need to track indexes for dirty files
+
+// TODO: consider further optimization of only generating source
+//       indexes on-demand for the src db
+
 
 namespace core {
 namespace r_util {

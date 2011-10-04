@@ -27,12 +27,20 @@ public class RProjectConfig extends JavaScriptObject
    
    public native static final RProjectConfig create(int restoreWorkspace,
                                                     int saveWorkspace,
-                                                    int alwaysSaveHistory) /*-{
+                                                    int alwaysSaveHistory,
+                                                    boolean enableCodeIndexing,
+                                                    boolean useSpacesForTab,
+                                                    int numSpacesForTab,
+                                                    String encoding) /*-{
       var config = new Object();
       config.version = 1.0;
       config.restore_workspace = restoreWorkspace;
       config.save_workspace = saveWorkspace;
       config.always_save_history = alwaysSaveHistory;
+      config.enable_code_indexing = enableCodeIndexing;
+      config.use_spaces_for_tab = useSpacesForTab;
+      config.num_spaces_for_tab = numSpacesForTab;
+      config.default_encoding = encoding;
       return config;
    }-*/;
 
@@ -51,4 +59,20 @@ public class RProjectConfig extends JavaScriptObject
    public native final int getAlwaysSaveHistory() /*-{
       return this.always_save_history;
    }-*/;   
+   
+   public native final boolean getEnableCodeIndexing() /*-{
+      return this.enable_code_indexing;
+   }-*/;  
+
+   public native final boolean getUseSpacesForTab() /*-{
+      return this.use_spaces_for_tab;
+   }-*/;  
+   
+   public native final int getNumSpacesForTab() /*-{
+      return this.num_spaces_for_tab;
+   }-*/;  
+   
+   public native final String getEncoding() /*-{
+      return this.default_encoding;
+   }-*/;
 }

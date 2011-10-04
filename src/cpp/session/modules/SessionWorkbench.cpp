@@ -289,9 +289,11 @@ Error setCRANMirror(const json::JsonRpcRequest& request,
 
 
 // options("pdfviewer")
-void viewPdfPostback(const std::string& pdfPath)
+void viewPdfPostback(const std::string& pdfPath,
+                    const module_context::PostbackHandlerContinuation& cont)
 {
    module_context::showFile(FilePath(pdfPath));
+   cont(EXIT_SUCCESS, "");
 }
 
 

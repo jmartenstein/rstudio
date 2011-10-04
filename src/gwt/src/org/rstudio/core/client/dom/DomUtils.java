@@ -65,10 +65,10 @@ public class DomUtils
       element.scrollTop = element.scrollHeight;
    }-*/;
 
-   public static JsArrayString splice(JsArrayString array,
-                                      int index,
-                                      int howMany,
-                                      String... elements)
+   public static JavaScriptObject splice(JavaScriptObject array,
+                                         int index,
+                                         int howMany,
+                                         String... elements)
    {
       JsArrayMixed args = JavaScriptObject.createArray().cast();
       args.push(index);
@@ -78,7 +78,7 @@ public class DomUtils
       return spliceInternal(array, args);
    }
 
-   private static native JsArrayString spliceInternal(JsArrayString array,
+   private static native JsArrayString spliceInternal(JavaScriptObject array,
                                                       JsArrayMixed args) /*-{
       return Array.prototype.splice.apply(array, args);
    }-*/;
@@ -395,6 +395,34 @@ public class DomUtils
       {
          container.scrollTop = top + height - container.offsetHeight ;
       }
+   }-*/;
+
+   // Forked from com.google.gwt.dom.client.Element.scrollIntoView()
+   public static native void scrollIntoViewVert(Element elem) /*-{
+     var top = elem.offsetTop;
+     var height = elem.offsetHeight;
+
+     if (elem.parentNode != elem.offsetParent) {
+       top -= elem.parentNode.offsetTop;
+     }
+
+     var cur = elem.parentNode;
+     while (cur && (cur.nodeType == 1)) {
+       if (top < cur.scrollTop) {
+         cur.scrollTop = top;
+       }
+       if (top + height > cur.scrollTop + cur.clientHeight) {
+         cur.scrollTop = (top + height) - cur.clientHeight;
+       }
+
+       var offsetTop = cur.offsetTop;
+       if (cur.parentNode != cur.offsetParent) {
+         offsetTop -= cur.parentNode.offsetTop;
+       }
+
+       top += offsetTop - cur.scrollTop;
+       cur = cur.parentNode;
+     }
    }-*/;
 
    public static Point getRelativePosition(Element container,

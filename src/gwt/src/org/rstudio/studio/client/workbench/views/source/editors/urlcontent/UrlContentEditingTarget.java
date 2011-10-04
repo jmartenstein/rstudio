@@ -24,12 +24,12 @@ import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import org.rstudio.core.client.Debug;
-import org.rstudio.core.client.FilePosition;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
 import org.rstudio.core.client.events.EnsureVisibleHandler;
 import org.rstudio.core.client.files.FileSystemContext;
+import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.ReadOnlyValue;
 import org.rstudio.studio.client.common.Value;
@@ -39,8 +39,11 @@ import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTarget;
+import org.rstudio.studio.client.workbench.views.source.events.SourceNavigationEvent;
 import org.rstudio.studio.client.workbench.views.source.model.ContentItem;
 import org.rstudio.studio.client.workbench.views.source.model.SourceDocument;
+import org.rstudio.studio.client.workbench.views.source.model.SourceNavigation;
+import org.rstudio.studio.client.workbench.views.source.model.SourcePosition;
 import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
 
 import java.util.HashSet;
@@ -58,11 +61,13 @@ public class UrlContentEditingTarget implements EditingTarget
    @Inject
    public UrlContentEditingTarget(SourceServerOperations server,
                                   Commands commands,
-                                  GlobalDisplay globalDisplay)
+                                  GlobalDisplay globalDisplay,
+                                  EventBus events)
    {
       server_ = server;
       commands_ = commands;
       globalDisplay_ = globalDisplay;
+      events_ = events;
    }
 
    public String getId()
@@ -82,6 +87,11 @@ public class UrlContentEditingTarget implements EditingTarget
    }
 
    public String getPath()
+   {
+      return null;
+   }
+   
+   public String getContext()
    {
       return null;
    }
@@ -135,6 +145,9 @@ public class UrlContentEditingTarget implements EditingTarget
    {
       commandReg_.removeHandler();
       commandReg_ = null;
+      
+      recordCurrentNavigationPosition();
+     
    }
 
    @Override
@@ -143,8 +156,32 @@ public class UrlContentEditingTarget implements EditingTarget
    }
    
    @Override
-   public void jumpToPosition(FilePosition position)
+   public void recordCurrentNavigationPosition()
+   {
+      events_.fireEvent(new SourceNavigationEvent(
+            SourceNavigation.create(
+            getId(), 
+            getPath(), 
+            SourcePosition.create(0, 0))));
+   }
+   
+   @Override
+   public void navigateToPosition(SourcePosition position, 
+                                  boolean recordCurrent)
    {   
+   }
+   
+   @Override
+   public void restorePosition(SourcePosition position)
+   {   
+   }
+   
+   @Override 
+   public boolean isAtSourceRow(SourcePosition position)
+   {
+      // always true because url content editing targets don't have the
+      // concept of a position
+      return true;
    }
    
    public boolean onBeforeDismiss()
@@ -257,6 +294,7 @@ public class UrlContentEditingTarget implements EditingTarget
    protected final SourceServerOperations server_;
    protected final Commands commands_;
    private final GlobalDisplay globalDisplay_;
+   private final EventBus events_;
    private Display view_;
    private HandlerRegistration commandReg_;
 

@@ -20,11 +20,14 @@
 
 #include <core/Log.hpp>
 
+#include <core/system/FileScanner.hpp>
 #include <core/Error.hpp>
+#include <core/FileInfo.hpp>
 #include <core/FilePath.hpp>
 #include <core/SafeConvert.hpp>
 #include <core/StringUtils.hpp>
 #include <core/system/System.hpp>
+#include <core/system/Environment.hpp>
 #include <core/r_util/RProjectFile.hpp>
 
 #include "DesktopApplicationLaunch.hpp"
@@ -167,6 +170,11 @@ QString verifyAndNormalizeFilename(QString filename)
       return fileInfo.absoluteFilePath();
    else
       return QString();
+}
+
+bool dummy(const FileInfo& file)
+{
+   return true;
 }
 
 } // anonymous namespace

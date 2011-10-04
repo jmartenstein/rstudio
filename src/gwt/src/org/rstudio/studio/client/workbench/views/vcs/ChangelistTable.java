@@ -12,9 +12,12 @@
  */
 package org.rstudio.studio.client.workbench.views.vcs;
 
-import com.google.gwt.cell.client.*;
+import com.google.gwt.cell.client.FieldUpdater;
+import com.google.gwt.cell.client.TextCell;
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.JsArray;
+import com.google.gwt.dom.client.Style.Unit;
+import com.google.gwt.event.dom.client.*;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.safehtml.shared.SafeHtml;
@@ -27,10 +30,13 @@ import com.google.gwt.user.cellview.client.ColumnSortEvent;
 import com.google.gwt.user.cellview.client.TextColumn;
 import com.google.gwt.user.client.ui.AbstractImagePrototype;
 import com.google.gwt.user.client.ui.Composite;
+import com.google.gwt.user.client.ui.LayoutPanel;
 import com.google.gwt.user.client.ui.ScrollPanel;
 import com.google.gwt.view.client.*;
 import org.rstudio.core.client.cellview.ColumnSortInfo;
 import org.rstudio.core.client.cellview.TriStateCheckboxCell;
+import org.rstudio.core.client.widget.MultiSelectCellTable;
+import org.rstudio.core.client.widget.ProgressPanel;
 import org.rstudio.studio.client.common.vcs.StatusAndPath;
 import org.rstudio.studio.client.workbench.views.vcs.events.StageUnstageEvent;
 import org.rstudio.studio.client.workbench.views.vcs.events.StageUnstageHandler;
@@ -39,8 +45,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 
 public class ChangelistTable extends Composite
+   implements HasKeyDownHandlers, HasClickHandlers
 {
-   protected interface CellTableResources extends CellTable.Resources
+   public interface CellTableResources extends CellTable.Resources
    {
       ImageResource statusAdded();
       ImageResource statusDeleted();
@@ -139,8 +146,7 @@ public class ChangelistTable extends Composite
 
    public ChangelistTable()
    {
-      table_ = new CellTable<StatusAndPath>(
-            100, resources_);
+      table_ = new MultiSelectCellTable<StatusAndPath>(100, resources_);
 
       dataProvider_ = new ListDataProvider<StatusAndPath>();
       sortHandler_ = new ColumnSortEvent.ListHandler<StatusAndPath>(
@@ -163,7 +169,62 @@ public class ChangelistTable extends Composite
 
       table_.setSize("100%", "auto");
 
-      initWidget(new ScrollPanel(table_));
+      layout_ = new LayoutPanel();
+      ScrollPanel scrollPanel = new ScrollPanel(table_);
+      layout_.add(scrollPanel);
+      layout_.setWidgetTopBottom(scrollPanel, 0, Unit.PX, 0, Unit.PX);
+      layout_.setWidgetLeftRight(scrollPanel, 0, Unit.PX, 0, Unit.PX);
+      progressPanel_ = new ProgressPanel();
+      progressPanel_.getElement().getStyle().setBackgroundColor("white");
+      layout_.add(progressPanel_);
+      layout_.setWidgetTopBottom(progressPanel_, 0, Unit.PX, 0, Unit.PX);
+      layout_.setWidgetLeftRight(progressPanel_, 0, Unit.PX, 0, Unit.PX);
+
+      setProgress(true);
+
+      initWidget(layout_);
+   }
+
+   public void toggleStaged(boolean moveSelection)
+   {
+      ArrayList<StatusAndPath> items = getSelectedItems();
+      if (items.size() > 0)
+      {
+         boolean unstage = !items.get(0).isDiscardable();
+         fireEvent(new StageUnstageEvent(unstage, items));
+
+         if (moveSelection)
+         {
+            moveSelectionDown();
+         }
+      }
+   }
+
+   public void moveSelectionDown()
+   {
+      if (getSelectedItems().size() == 1)
+         {
+            table_.moveSelection(false, false);
+         }
+   }
+
+   public void showProgress()
+   {
+      setProgress(true);
+   }
+
+   protected void setProgress(boolean showProgress)
+   {
+      if (showProgress)
+      {
+         layout_.setWidgetVisible(progressPanel_, true);
+         progressPanel_.beginProgressOperation(300);
+      }
+      else
+      {
+         layout_.setWidgetVisible(progressPanel_, false);
+         progressPanel_.endProgressOperation();
+      }
    }
 
    private void configureTable()
@@ -206,7 +267,7 @@ public class ChangelistTable extends Composite
          }
       });
       table_.addColumn(stagedColumn, "Staged");
-      table_.setColumnWidth(stagedColumn, "45px");
+      table_.setColumnWidth(stagedColumn, "46px");
 
 
       Column<StatusAndPath, String> statusColumn = new Column<StatusAndPath, String>(
@@ -221,7 +282,7 @@ public class ChangelistTable extends Composite
       statusColumn.setSortable(true);
       statusColumn.setHorizontalAlignment(Column.ALIGN_CENTER);
       table_.addColumn(statusColumn, "Status");
-      table_.setColumnWidth(statusColumn, "55px");
+      table_.setColumnWidth(statusColumn, "56px");
       sortHandler_.setComparator(statusColumn, new Comparator<StatusAndPath>()
       {
          @Override
@@ -242,13 +303,32 @@ public class ChangelistTable extends Composite
       pathColumn.setSortable(true);
       sortHandler_.setComparator(pathColumn, new Comparator<StatusAndPath>()
       {
+         private String[] splitDirAndName(String path)
+         {
+            int index = path.lastIndexOf("/");
+            if (index < 0)
+               index = path.lastIndexOf("\\");
+            if (index < 0)
+               return new String[] { "", path };
+            else
+               return new String[] { path.substring(0, index),
+                                     path.substring(index + 1) };
+         }
+
          @Override
          public int compare(StatusAndPath a, StatusAndPath b)
          {
-            return a.getPath().compareToIgnoreCase(b.getPath());
+            String[] splitA = splitDirAndName(a.getPath());
+            String[] splitB = splitDirAndName(b.getPath());
+            int result = splitA[0].compareTo(splitB[0]);
+            if (result == 0)
+               result = splitA[1].compareTo(splitB[1]);
+            return result;
          }
       });
       table_.addColumn(pathColumn, "Path");
+
+      table_.getColumnSortList().push(pathColumn);
    }
 
    public HandlerRegistration addSelectionChangeHandler(
@@ -259,9 +339,13 @@ public class ChangelistTable extends Composite
 
    public void setItems(ArrayList<StatusAndPath> items)
    {
+      setProgress(false);
       table_.setPageSize(items.size());
       dataProvider_.getList().clear();
       dataProvider_.getList().addAll(items);
+      ColumnSortEvent.fire(table_,
+                           table_.getColumnSortList());
+
    }
 
    public ArrayList<StatusAndPath> getSelectedItems()
@@ -288,6 +372,12 @@ public class ChangelistTable extends Composite
             results.add(item.getPath());
       }
       return results;
+   }
+
+   public void setSelectedStatusAndPaths(ArrayList<StatusAndPath> selectedPaths)
+   {
+      for (StatusAndPath path : selectedPaths)
+         selectionModel_.setSelected(path, true);
    }
 
    public ArrayList<String> getSelectedDiscardablePaths()
@@ -323,9 +413,23 @@ public class ChangelistTable extends Composite
       return table_.getColumnSortList().hashCode();
    }
 
-   private final CellTable<StatusAndPath> table_;
+   @Override
+   public HandlerRegistration addKeyDownHandler(KeyDownHandler handler)
+   {
+      return table_.addKeyDownHandler(handler);
+   }
+
+   @Override
+   public HandlerRegistration addClickHandler(ClickHandler handler)
+   {
+      return table_.addClickHandler(handler);
+   }
+
+   private final MultiSelectCellTable<StatusAndPath> table_;
    private final MultiSelectionModel<StatusAndPath> selectionModel_;
    private final ColumnSortEvent.ListHandler<StatusAndPath> sortHandler_;
    private final ListDataProvider<StatusAndPath> dataProvider_;
+   private final ProgressPanel progressPanel_;
+   private LayoutPanel layout_;
    private static final CellTableResources resources_ = GWT.<CellTableResources>create(CellTableResources.class);
 }

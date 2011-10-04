@@ -18,6 +18,9 @@ project (RSTUDIO_CPP)
 # include them here to support cpp only configurations for development)
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../CMakeGlobals.txt")
 
+# global directives
+add_definitions(-DBOOST_ENABLE_ASSERT_HANDLER)
+
 # UNIX specific global directivies
 if(UNIX)
    # cmake modules
@@ -54,8 +57,7 @@ if(UNIX)
       add_definitions(-D_FORTIFY_SOURCE=2)
       add_definitions(-fstack-protector --param ssp-buffer-size=4)
       add_definitions(-pie -fPIE)
-      set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro)
-      set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,now)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro,-z,now")
    endif()
 
 # Win32 specific global directives
@@ -65,8 +67,7 @@ else()
    if(RSTUDIO_SESSION_WIN64)
 
       # increase stack size to 10MB, avoid mingw auto-importing warning,
-      set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS}
-         -Wl,--stack=0x00a00000,--enable-auto-import)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x00a00000,--enable-auto-import")
 
       add_definitions(-D_WIN64
                       -D_WIN64_WINNT=0x0501
@@ -77,8 +78,7 @@ else()
 
       # increase stack size to 10MB, avoid mingw auto-importing warning,
       # and ensure that we are large address aware
-      set(CMAKE_EXE_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS}
-         -Wl,--stack=0x00a00000,--enable-auto-import,--large-address-aware)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x00a00000,--enable-auto-import,--large-address-aware")
 
       add_definitions(-D_WIN32_WINNT=0x0501
                       -D_WIN32_IE=0x600
@@ -146,60 +146,70 @@ else()
    find_package(Boost ${BOOST_VERSION} REQUIRED COMPONENTS ${BOOST_LIBS})
 endif()
 
-# find LibR
-if(RSTUDIO_SESSION_WIN64)
-   set(LIBR_FIND_WINDOWS_64BIT TRUE)
-endif()
-find_package(LibR REQUIRED)
-
-# verify we got the required R version
-if(LIBR_FOUND AND RSTUDIO_VERIFY_R_VERSION)
-   include(CheckCSourceRuns)
-   set(CMAKE_REQUIRED_INCLUDES ${LIBR_INCLUDE_DIRS})
-   check_c_source_runs("
-     #include <Rversion.h>
-     int main()
-     {
-        int meetsRequirement = R_VERSION >= R_Version(${RSTUDIO_R_MAJOR_VERSION_REQUIRED},${RSTUDIO_R_MINOR_VERSION_REQUIRED},${RSTUDIO_R_PATCH_VERSION_REQUIRED});
-        return !meetsRequirement;
-     }"
-     LIBR_MINIMUM_VERSION)
-   if(NOT LIBR_MINIMUM_VERSION)
-      message(FATAL_ERROR "Minimum R version (${RSTUDIO_R_MAJOR_VERSION_REQUIRED}.${RSTUDIO_R_MINOR_VERSION_REQUIRED}.${RSTUDIO_R_PATCH_VERSION_REQUIRED}) not found.")
-   endif()
-endif()
-
-# initialize subdirectories
-file(MAKE_DIRECTORY conf)
-
-# core subprojects
+# core library
 add_subdirectory(core)
-add_subdirectory(r)
 
-# add desktop subprojects if we aren't building in server only mode
-if(RSTUDIO_DESKTOP)
+# are we in CORE_DEV mode? if so then just add the core/dev project
+# otherwise, add the rest of our projects
+if(RSTUDIO_CONFIG_CORE_DEV)
 
-   add_subdirectory(desktop)
-   configure_file(rdesktop-dev.in ${CMAKE_CURRENT_BINARY_DIR}/rdesktop-dev)
-   configure_file(conf/rdesktop-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rdesktop-dev.conf)
+   add_subdirectory(core/dev)
 
-endif()
+else()
 
-# add this after desktop and server so it is not included in fixup_bundle
-# processing which we do in destkop
-add_subdirectory(session)
+   # find LibR
+   if(RSTUDIO_SESSION_WIN64)
+      set(LIBR_FIND_WINDOWS_64BIT TRUE)
+   endif()
+   find_package(LibR REQUIRED)
 
-# add server subprojects if we aren't building in desktop only mode
-if(RSTUDIO_SERVER)
+   # verify we got the required R version
+   if(LIBR_FOUND AND RSTUDIO_VERIFY_R_VERSION)
+      include(CheckCSourceRuns)
+      set(CMAKE_REQUIRED_INCLUDES ${LIBR_INCLUDE_DIRS})
+      check_c_source_runs("
+        #include <Rversion.h>
+        int main()
+        {
+           int meetsRequirement = R_VERSION >= R_Version(${RSTUDIO_R_MAJOR_VERSION_REQUIRED},${RSTUDIO_R_MINOR_VERSION_REQUIRED},${RSTUDIO_R_PATCH_VERSION_REQUIRED});
+           return !meetsRequirement;
+        }"
+        LIBR_MINIMUM_VERSION)
+      if(NOT LIBR_MINIMUM_VERSION)
+         message(FATAL_ERROR "Minimum R version (${RSTUDIO_R_MAJOR_VERSION_REQUIRED}.${RSTUDIO_R_MINOR_VERSION_REQUIRED}.${RSTUDIO_R_PATCH_VERSION_REQUIRED}) not found.")
+      endif()
+   endif()
 
-   add_subdirectory(server)
+   # r library
+   add_subdirectory(r)
 
-   configure_file(rserver-dev ${CMAKE_CURRENT_BINARY_DIR}/rserver-dev)
-   configure_file(conf/rserver-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rserver-dev.conf)
-   configure_file(conf/rsession-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rsession-dev.conf)
+   # initialize subdirectories
+   file(MAKE_DIRECTORY conf)
 
-   add_subdirectory(session/postback)
-   configure_file(session/postback/rpostback-pdfviewer session/postback)
+   # add desktop subprojects if we aren't building in server only mode
+   if(RSTUDIO_DESKTOP)
+
+      add_subdirectory(desktop)
+      configure_file(rdesktop-dev.in ${CMAKE_CURRENT_BINARY_DIR}/rdesktop-dev)
+      configure_file(conf/rdesktop-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rdesktop-dev.conf)
+
+   endif()
+
+   # add this after desktop so it is not included in fixup_bundle
+   # processing which we do in desktop
+   add_subdirectory(session)
+
+
+   # add server subprojects if we aren't building in desktop only mode
+   if(RSTUDIO_SERVER)
+
+      add_subdirectory(server)
+
+      configure_file(rserver-dev ${CMAKE_CURRENT_BINARY_DIR}/rserver-dev)
+      configure_file(conf/rserver-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rserver-dev.conf)
+      configure_file(conf/rsession-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rsession-dev.conf)
+
+   endif()
 
 endif()
 

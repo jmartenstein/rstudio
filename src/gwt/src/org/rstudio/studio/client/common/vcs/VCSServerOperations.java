@@ -14,6 +14,7 @@ package org.rstudio.studio.client.common.vcs;
 
 import com.google.gwt.core.client.JsArray;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
+import org.rstudio.studio.client.common.console.ConsoleProcess;
 import org.rstudio.studio.client.server.*;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.views.vcs.dialog.CommitInfo;
@@ -56,10 +57,15 @@ public interface VCSServerOperations
    void vcsFullStatus(
          ServerRequestCallback<JsArray<StatusAndPath>> requestCallback);
 
+   void vcsListBranches(ServerRequestCallback<BranchesInfo> requestCallback);
+
+   void vcsCheckout(String id,
+                    ServerRequestCallback<ConsoleProcess> requestCallback);
+
    void vcsCommitGit(String message,
                      boolean amend,
                      boolean signOff,
-                     ServerRequestCallback<Void> requestCallback);
+                     ServerRequestCallback<ConsoleProcess> requestCallback);
 
    void vcsDiffFile(String path,
                     PatchMode patchMode,
@@ -79,8 +85,19 @@ public interface VCSServerOperations
 
    void vcsExecuteCommand(
          String command,
-         ServerRequestCallback<ExecuteCommandResult> requestCallback);
+         ServerRequestCallback<ConsoleProcess> requestCallback);
 
    void vcsShow(String rev,
                 ServerRequestCallback<String> requestCallback);
+
+   void vcsClone(String repoUrl,
+                 String parentPath,
+                 ServerRequestCallback<ConsoleProcess> requestCallback);
+
+   void vcsPush(ServerRequestCallback<ConsoleProcess> requestCallback);
+
+   void vcsPull(ServerRequestCallback<ConsoleProcess> requestCallback);
+
+   void askpassCompleted(String value,
+                         ServerRequestCallback<Void> requestCallback);
 }

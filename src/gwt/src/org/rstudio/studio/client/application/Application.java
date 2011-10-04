@@ -161,6 +161,13 @@ public class Application implements ApplicationEventHandlers,
    {
       showToolbar(false, true);
    }
+   
+   @Handler
+   public void onGoToFileFunction()
+   {
+      view_.performGoToFunction();
+   }
+   
     
    public void onUnauthorized(UnauthorizedEvent event)
    {
@@ -571,7 +578,7 @@ public class Application implements ApplicationEventHandlers,
       // update prefs
       if (updatePref)
       {
-         uiPrefs_.get().toolbarVisible().setValue(showToolbar);
+         uiPrefs_.get().toolbarVisible().setGlobalValue(showToolbar);
          server_.setUiPrefs(
                   session_.getSessionInfo().getUiPrefs(), 
                   new SimpleRequestCallback<Void>("Error Saving Preference"));

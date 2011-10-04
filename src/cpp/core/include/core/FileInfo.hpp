@@ -16,13 +16,17 @@
 
 #include <stdint.h>
 #include <ctime>
+#include <string.h>
 
 #include <string>
 #include <iosfwd>
 
-namespace core {
+#include <core/FilePath.hpp>
 
-class FilePath;
+// TODO: satisfy outselves that it is safe to query for symlink status
+// in all cases and eliminate its "optional" semantics
+
+namespace core {
 
 class FileInfo
 {
@@ -35,36 +39,39 @@ public:
    {
    }
    
-   explicit FileInfo(const FilePath& filePath) ;
+
+   // NOTE: this constructor will NOT read symlink info from the passed
+   // FilePath object. this is because we want to restrict reading of
+   // symlink to status to funcitons that are expressly symlink aware
+   // (this is because the behavior of reading symlink status is not
+   // fully known and we don't want to make a change underneath our
+   // entire codebase which does this universally (note that we've been
+   // burned by boost filesystem having nasty beahvior for seemingly
+   // innocuous operations before!)
+   explicit FileInfo(const FilePath& filePath,
+                     bool isSymlink = false) ;
    
-   FileInfo(const std::string& absolutePath, bool isDirectory);
+   FileInfo(const std::string& absolutePath,
+            bool isDirectory,
+            bool isSymlink = false);
    
    FileInfo(const std::string& absolutePath,
             bool isDirectory,
             uintmax_t size,
-            std::time_t lastWriteTime);
-   
-   FileInfo(const FileInfo& rhs)
-   {
-      assign(rhs);
-   }
+            std::time_t lastWriteTime,
+            bool isSymlink = false);
    
    virtual ~FileInfo()
    {
    }
 
+   // COPYING: via compliler (copyable members)
+
 public:
    bool empty() const { return absolutePath_.empty(); }
    
-   FileInfo& operator=(const FileInfo& rhs)
-   {
-      if (&rhs != this)
-      {
-         assign(rhs);
-      }
-      return *this;
-   }
-   
+   // NOTE: because symlink status is optional, it is NOT taken
+   // into account for equality tests
    bool operator==(const FileInfo& other) const
    {
       return absolutePath_ == other.absolutePath_ &&
@@ -78,47 +85,57 @@ public:
       return !(*this == other); 
    }
    
-   bool operator < (const FileInfo& other) const
-   {
-      if (absolutePath_ < other.absolutePath_)
-         return true;
-      else if (isDirectory_ < other.isDirectory_)
-         return true;
-      else if (size_ < other.size_)
-         return true;
-      else if (lastWriteTime_ < other.lastWriteTime_)
-         return true;
-      else
-         return false;
-   }
-   
 public:
    std::string absolutePath() const { return absolutePath_.c_str(); }
    bool isDirectory() const { return isDirectory_; }
    uintmax_t size() const { return size_; }
    std::time_t lastWriteTime() const { return lastWriteTime_; }
- 
-private:
-   void assign(const FileInfo& rhs)
-   {
-      absolutePath_ = rhs.absolutePath_.c_str(); // force copy
-      isDirectory_ = rhs.isDirectory_;
-      size_ = rhs.size_ ;
-      lastWriteTime_ = rhs.lastWriteTime_;
-   }
+   bool isSymlink() const { return isSymlink_; }
    
 private:
    std::string absolutePath_;
    bool isDirectory_;
    uintmax_t size_;
    std::time_t lastWriteTime_;
+   bool isSymlink_;
 };
    
-inline bool compareFileInfoPaths(const FileInfo& fileInfo1, 
-                                 const FileInfo& fileInfo2)
+inline int fileInfoPathCompare(const FileInfo& a, const FileInfo& b)
 {
-   return fileInfo1.absolutePath() < fileInfo2.absolutePath();
+   // use stcoll because that is what alphasort (comp function passed to
+   // scandir) uses for its sorting)
+   int result = ::strcoll(a.absolutePath().c_str(), b.absolutePath().c_str());
+
+   if (result != 0)
+      return result;
+
+   if (a.isDirectory() == b.isDirectory())
+      return 0;
+
+   return a.isDirectory() ? -1 : 1;
 }
+
+inline bool fileInfoPathLessThan(const FileInfo& a, const FileInfo& b)
+{
+   return fileInfoPathCompare(a, b) < 0;
+}
+
+
+inline bool fileInfoHasPath(const FileInfo& fileInfo, const std::string& path)
+{
+   return fileInfo.absolutePath() == path;
+}
+
+inline FilePath toFilePath(const FileInfo& fileInfo)
+{
+   return FilePath(fileInfo.absolutePath());
+}
+
+inline FileInfo toFileInfo(const FilePath& filePath)
+{
+   return FileInfo(filePath);
+}
+
    
 std::ostream& operator << (std::ostream& stream, const FileInfo& fileInfo) ;
 

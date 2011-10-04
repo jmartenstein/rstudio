@@ -34,7 +34,9 @@ import org.rstudio.core.client.ValueSink;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.widget.*;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
+import org.rstudio.studio.client.common.vcs.StatusAndPath;
 import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.workbench.views.vcs.BranchToolbarButton;
 import org.rstudio.studio.client.workbench.views.vcs.ChangelistTable;
 import org.rstudio.studio.client.workbench.views.vcs.ChangelistTablePresenter;
 import org.rstudio.studio.client.workbench.views.vcs.console.ConsoleBarFramePanel;
@@ -65,12 +67,6 @@ public class ReviewPanel extends Composite implements Display
 
       @Source("images/ignore.png")
       ImageResource ignore();
-
-      @Source("images/pull.png")
-      ImageResource pull();
-
-      @Source("images/push.png")
-      ImageResource push();
 
       @Source("images/stage.png")
       ImageResource stage();
@@ -202,8 +198,9 @@ public class ReviewPanel extends Composite implements Display
    public ReviewPanel(ChangelistTablePresenter changelist,
                       LineTableView diffPane,
                       ConsoleBarFramePanel consoleBarFramePanel,
-                      Commands commands,
-                      FileTypeRegistry fileTypeRegistry)
+                      final Commands commands,
+                      FileTypeRegistry fileTypeRegistry,
+                      BranchToolbarButton branchToolbarButton)
    {
       fileTypeRegistry_ = fileTypeRegistry;
       splitPanel_ = new SplitLayoutPanel(4);
@@ -214,6 +211,7 @@ public class ReviewPanel extends Composite implements Display
 
       changelist_ = changelist.getView();
       lines_ = diffPane;
+      lines_.getElement().setTabIndex(-1);
 
       Widget widget = GWT.<Binder>create(Binder.class).createAndBindUi(this);
       consoleBarFramePanel.setWidget(widget);
@@ -227,6 +225,8 @@ public class ReviewPanel extends Composite implements Display
 
       switchViewButton_ = new LeftRightToggleButton("Changes", "History", true);
       topToolbar_.addLeftWidget(switchViewButton_);
+
+      topToolbar_.addLeftWidget(branchToolbarButton);
 
       stageAllFilesButton_ = topToolbar_.addLeftWidget(new ToolbarButton(
             "Stage All Files", RES.stageAllFiles(), (ClickHandler) null));
@@ -247,19 +247,28 @@ public class ReviewPanel extends Composite implements Display
       ignoreButton_ = topToolbar_.addLeftWidget(new ToolbarButton(
             "Ignore", RES.ignore(), (ClickHandler) null));
 
-      refreshButton_ = topToolbar_.addRightWidget(new ToolbarButton(
+      topToolbar_.addRightWidget(new ToolbarButton(
             "Refresh", commands.vcsRefresh().getImageResource(),
-            (ClickHandler) null));
+            new ClickHandler() {
+               @Override
+               public void onClick(ClickEvent event)
+               {
+                  changelist_.showProgress();
+                  commands.vcsRefresh().execute();
+               }
+            }));
 
       topToolbar_.addRightSeparator();
 
-      pullButton_ = topToolbar_.addRightWidget(new ToolbarButton(
-            "Pull", RES.pull(), (ClickHandler) null));
+      topToolbar_.addRightWidget(new ToolbarButton(
+            "Pull", commands.vcsPull().getImageResource(),
+            commands.vcsPull()));
 
       topToolbar_.addRightSeparator();
 
-      pushButton_ = topToolbar_.addRightWidget(new ToolbarButton(
-            "Push", RES.push(), (ClickHandler) null));
+      topToolbar_.addRightWidget(new ToolbarButton(
+            "Push", commands.vcsPush().getImageResource(),
+            commands.vcsPush()));
 
       diffToolbar_.addStyleName(RES.styles().toolbar());
       diffToolbar_.addStyleName(RES.styles().diffToolbar());
@@ -296,6 +305,8 @@ public class ReviewPanel extends Composite implements Display
       });
 
       listBoxAdapter_ = new ListBoxAdapter(contextLines_);
+
+      FontSizer.applyNormalFontSize(commitMessage_);
    }
 
    @Override
@@ -326,24 +337,6 @@ public class ReviewPanel extends Composite implements Display
    public HasClickHandlers getIgnoreButton()
    {
       return ignoreButton_;
-   }
-
-   @Override
-   public HasClickHandlers getRefreshButton()
-   {
-      return refreshButton_;
-   }
-
-   @Override
-   public HasClickHandlers getPullButton()
-   {
-      return pullButton_;
-   }
-
-   @Override
-   public HasClickHandlers getPushButton()
-   {
-      return pushButton_;
    }
 
    @Override
@@ -424,6 +417,12 @@ public class ReviewPanel extends Composite implements Display
    }
 
    @Override
+   public void setSelectedStatusAndPaths(ArrayList<StatusAndPath> selectedPaths)
+   {
+      changelist_.setSelectedStatusAndPaths(selectedPaths);
+   }
+
+   @Override
    public ArrayList<String> getSelectedDiscardablePaths()
    {
       return changelist_.getSelectedDiscardablePaths();
@@ -500,9 +499,6 @@ public class ReviewPanel extends Composite implements Display
 
    private ToolbarButton stageAllFilesButton_;
    private ToolbarButton ignoreButton_;
-   private ToolbarButton refreshButton_;
-   private ToolbarButton pullButton_;
-   private ToolbarButton pushButton_;
    private ToolbarButton stageAllButton_;
    private ToolbarButton discardAllButton_;
    private ToolbarButton unstageAllButton_;

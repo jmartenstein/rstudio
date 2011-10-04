@@ -22,6 +22,7 @@ import com.google.gwt.http.client.URL;
 import com.google.gwt.json.client.*;
 import com.google.gwt.user.client.Random;
 import com.google.inject.Inject;
+import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.StringUtil;
@@ -32,8 +33,10 @@ import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.*;
 import org.rstudio.studio.client.application.model.HttpLogEntry;
 import org.rstudio.studio.client.common.codetools.Completions;
+import org.rstudio.studio.client.common.console.ConsoleProcess;
+import org.rstudio.studio.client.common.console.ConsoleProcess.ConsoleProcessFactory;
 import org.rstudio.studio.client.common.mirrors.model.CRANMirror;
-import org.rstudio.studio.client.common.vcs.ExecuteCommandResult;
+import org.rstudio.studio.client.common.vcs.BranchesInfo;
 import org.rstudio.studio.client.common.vcs.StatusAndPath;
 import org.rstudio.studio.client.projects.model.RProjectConfig;
 import org.rstudio.studio.client.server.Bool;
@@ -42,7 +45,9 @@ import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.remote.RemoteServerEventListener.ClientEvent;
-import org.rstudio.studio.client.workbench.codesearch.model.RSourceItem;
+import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchResults;
+import org.rstudio.studio.client.workbench.codesearch.model.SearchPathFunctionDefinition;
+import org.rstudio.studio.client.workbench.codesearch.model.FunctionDefinition;
 import org.rstudio.studio.client.workbench.model.Agreement;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.SessionInfo;
@@ -72,8 +77,10 @@ import java.util.Map;
 public class RemoteServer implements Server
 { 
    @Inject
-   public RemoteServer(Session session, EventBus eventBus)
+   public RemoteServer(Session session, EventBus eventBus,
+                       Provider<ConsoleProcessFactory> pConsoleProcessFactory)
    {
+      pConsoleProcessFactory_ = pConsoleProcessFactory;
       clientId_ = null;
       disconnected_ = false;
       workbenchReady_ = false;
@@ -250,12 +257,58 @@ public class RemoteServer implements Server
    public void searchCode(
          String term, 
          int maxResults,
-         ServerRequestCallback<RpcObjectList<RSourceItem>> requestCallback)
+         ServerRequestCallback<CodeSearchResults> requestCallback)
    {
       JSONArray params = new JSONArray();
       params.set(0, new JSONString(term));
       params.set(1, new JSONNumber(maxResults));
       sendRequest(RPC_SCOPE, SEARCH_CODE, params, requestCallback);
+   }
+   
+   public void getFunctionDefinition(
+         String line, 
+         int pos,
+         ServerRequestCallback<FunctionDefinition> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(line));
+      params.set(1, new JSONNumber(pos));
+      sendRequest(RPC_SCOPE, 
+                  GET_FUNCTION_DEFINITION, 
+                  params, 
+                  requestCallback);
+   }
+   
+   public void findFunctionInSearchPath(
+         String line, 
+         int pos,
+         String fromWhere,
+         ServerRequestCallback<SearchPathFunctionDefinition> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(line));
+      params.set(1, new JSONNumber(pos));
+      params.set(2, fromWhere != null ? new JSONString(fromWhere) :
+                                        JSONNull.getInstance());
+      sendRequest(RPC_SCOPE, 
+                  FIND_FUNCTION_IN_SEARCH_PATH, 
+                  params, 
+                  requestCallback);
+   }
+
+
+   public void getSearchPathFunctionDefinition(
+         String name,
+         String namespace,
+         ServerRequestCallback<SearchPathFunctionDefinition> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(name));
+      params.set(1, new JSONString(namespace));
+      sendRequest(RPC_SCOPE, 
+                  GET_SEARCH_PATH_FUNCTION_DEFINITION, 
+                  params, 
+                  requestCallback);
    }
 
    public void consoleInput(String consoleInput,
@@ -268,7 +321,39 @@ public class RemoteServer implements Server
    {
       sendRequest(RPC_SCOPE, RESET_CONSOLE_ACTIONS, requestCallback);
    }
-   
+
+   @Override
+   public void processInit(String command,
+                           ServerRequestCallback<String> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, PROCESS_INIT, command, requestCallback);
+   }
+
+   public void processStart(String handle,
+                            ServerRequestCallback<Void> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, PROCESS_START, handle, requestCallback);
+   }
+
+   @Override
+   public void processInterrupt(String handle,
+                                ServerRequestCallback<Void> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, PROCESS_INTERRUPT, handle, requestCallback);
+   }
+
+   @Override
+   public void processWriteStdin(String handle,
+                                 String input,
+                                 ServerRequestCallback<Void> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(handle));
+      params.set(1, new JSONString(input));
+      sendRequest(RPC_SCOPE, PROCESS_WRITE_STDIN, params, requestCallback);
+   }
+
+
    public void interrupt(ServerRequestCallback<Void> requestCallback)
    {
       sendRequest(RPC_SCOPE, INTERRUPT, requestCallback);
@@ -548,6 +633,13 @@ public class RemoteServer implements Server
                   null) ;
    }
 
+   @Override
+   public void stat(String path,
+                    ServerRequestCallback<FileSystemItem> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, STAT, path, requestCallback);
+   }
+
    public void listFiles(
                   FileSystemItem directory,
                   boolean monitor,
@@ -680,7 +772,7 @@ public class RemoteServer implements Server
    
    public String getFileExportUrl(String name, FileSystemItem file)
    {
-      return getApplicationURL(EXPORT_SCOPE) + "?" +
+      return getApplicationURL(EXPORT_SCOPE) + "/" + URL.encodePathSegment(name) + "?" +
          "name=" + URL.encodeQueryString(name) + "&" +
          "file=" + URL.encodeQueryString(file.getPath());
    }
@@ -700,7 +792,7 @@ public class RemoteServer implements Server
       }
          
       // return url
-      return getApplicationURL(EXPORT_SCOPE) + "?" +
+      return getApplicationURL(EXPORT_SCOPE) + "/" + URL.encodePathSegment(name) + "?" +
         "name=" + URL.encodeQueryString(name) + "&" +
         "parent=" + URL.encodeQueryString(parentDirectory.getPath()) + "&" +
          files.toString();
@@ -832,6 +924,17 @@ public class RemoteServer implements Server
       sendRequest(RPC_SCOPE, SET_MANIPULATOR_VALUES, params, requestCallback);
    }
    
+   public void manipulatorPlotClicked(
+                                 int x, 
+                                 int y, 
+                                 ServerRequestCallback<Void> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONNumber(x));
+      params.set(1, new JSONNumber(y));
+      sendRequest(RPC_SCOPE, MANIPULATOR_PLOT_CLICKED, params, requestCallback);
+   }
+   
    public void createProject(
          String projectDirectory,
          ServerRequestCallback<Void> requestCallback)
@@ -871,12 +974,6 @@ public class RemoteServer implements Server
       params.set(2, encoding != null ? new JSONString(encoding) 
                                      : JSONNull.getInstance());
       sendRequest(RPC_SCOPE, OPEN_DOCUMENT, params, requestCallback);
-   }
-
-   public void listDocuments(
-         ServerRequestCallback<JsArray<SourceDocument>> requestCallback)
-   {
-      sendRequest(RPC_SCOPE, LIST_DOCUMENTS, requestCallback);
    }
 
    public void saveDocument(String id,
@@ -1201,16 +1298,91 @@ public class RemoteServer implements Server
       sendRequest(RPC_SCOPE, VCS_FULL_STATUS, requestCallback);
    }
 
+   @Override
+   public void vcsListBranches(ServerRequestCallback<BranchesInfo> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, VCS_LIST_BRANCHES, requestCallback);
+   }
+
+   @Override
+   public void vcsCheckout(String id,
+                           ServerRequestCallback<ConsoleProcess> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, VCS_CHECKOUT, id,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
+   }
+
    public void vcsCommitGit(String message,
                             boolean amend,
                             boolean signOff,
-                            ServerRequestCallback<Void> requestCallback)
+                            ServerRequestCallback<ConsoleProcess> requestCallback)
    {
       JSONArray params = new JSONArray();
       params.set(0, new JSONString(message));
       params.set(1, JSONBoolean.getInstance(amend));
       params.set(2, JSONBoolean.getInstance(signOff));
-      sendRequest(RPC_SCOPE, VCS_COMMIT_GIT, params, requestCallback);
+      sendRequest(RPC_SCOPE, VCS_COMMIT_GIT, params,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
+   }
+
+   private class ConsoleProcessCallbackAdapter
+         extends ServerRequestCallback<String>
+   {
+      private ConsoleProcessCallbackAdapter(
+            ServerRequestCallback<ConsoleProcess> callback)
+      {
+         callback_ = callback;
+      }
+
+      @Override
+      public void onResponseReceived(String response)
+      {
+         pConsoleProcessFactory_.get().connectToProcess(response,
+                                                        callback_);
+      }
+
+      @Override
+      public void onError(ServerError error)
+      {
+         callback_.onError(error);
+      }
+
+      private final ServerRequestCallback<ConsoleProcess> callback_;
+   }
+
+   public void vcsPush(ServerRequestCallback<ConsoleProcess> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, VCS_PUSH,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
+   }
+
+   @Override
+   public void vcsClone(String repoUrl,
+                        String parentPath,
+                        ServerRequestCallback<ConsoleProcess> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(repoUrl));
+      params.set(1, new JSONString(parentPath));
+      sendRequest(RPC_SCOPE, VCS_CLONE, params,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
+   }
+
+   public void vcsPull(ServerRequestCallback<ConsoleProcess> requestCallback)
+   {
+      sendRequest(RPC_SCOPE, VCS_PULL,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
+   }
+
+   @Override
+   public void askpassCompleted(String value,
+                                ServerRequestCallback<Void> requestCallback)
+   {
+      // TODO: Sending private key passphrase, potentially over unencrypted HTTP
+      JSONArray params = new JSONArray();
+      params.set(0, value == null ? JSONNull.getInstance()
+                                  : new JSONString(value));
+      sendRequest(RPC_SCOPE, ASKPASS_COMPLETED, params, requestCallback);
    }
 
    @Override
@@ -1250,9 +1422,10 @@ public class RemoteServer implements Server
 
    @Override
    public void vcsExecuteCommand(String command,
-                                 ServerRequestCallback<ExecuteCommandResult> requestCallback)
+                                 ServerRequestCallback<ConsoleProcess> requestCallback)
    {
-      sendRequest(RPC_SCOPE, VCS_EXECUTE_COMMAND, command, requestCallback);
+      sendRequest(RPC_SCOPE, VCS_EXECUTE_COMMAND, command,
+                  new ConsoleProcessCallbackAdapter(requestCallback));
    }
 
    @Override
@@ -1609,10 +1782,12 @@ public class RemoteServer implements Server
    
    private final RemoteServerAuth serverAuth_;
    private final RemoteServerEventListener serverEventListener_ ;
+
+   private final Provider<ConsoleProcessFactory> pConsoleProcessFactory_;
   
    private final Session session_;
    private final EventBus eventBus_;
-  
+
    // url scopes
    private static final String RPC_SCOPE = "rpc";
    private static final String FILES_SCOPE = "files";
@@ -1637,6 +1812,9 @@ public class RemoteServer implements Server
    private static final String SET_CLIENT_STATE = "set_client_state";
    private static final String USER_PROMPT_COMPLETED = "user_prompt_completed";
    private static final String SEARCH_CODE = "search_code";
+   private static final String GET_SEARCH_PATH_FUNCTION_DEFINITION = "get_search_path_function_definition";
+   private static final String GET_FUNCTION_DEFINITION = "get_function_definition";
+   private static final String FIND_FUNCTION_IN_SEARCH_PATH = "find_function_in_search_path";
    
    private static final String CONSOLE_INPUT = "console_input";
    private static final String RESET_CONSOLE_ACTIONS = "reset_console_actions";
@@ -1645,6 +1823,11 @@ public class RemoteServer implements Server
    private static final String HTTP_LOG = "http_log";
    private static final String GET_COMPLETIONS = "get_completions";
    private static final String GET_HELP_AT_CURSOR = "get_help_at_cursor";
+
+   private static final String PROCESS_INIT = "process_init";
+   private static final String PROCESS_START = "process_start";
+   private static final String PROCESS_INTERRUPT = "process_interrupt";
+   private static final String PROCESS_WRITE_STDIN = "process_write_stdin";
 
    private static final String LIST_OBJECTS = "list_objects";
    private static final String REMOVE_ALL_OBJECTS = "remove_all_objects";
@@ -1674,6 +1857,7 @@ public class RemoteServer implements Server
    private static final String GET_HELP_LINKS = "get_help_links" ;
    private static final String SET_HELP_LINKS = "set_help_links" ;
 
+   private static final String STAT = "stat";
    private static final String LIST_FILES = "list_files";
    private static final String LIST_ALL_FILES = "list_all_files";
    private static final String CREATE_FOLDER = "create_folder";
@@ -1695,6 +1879,7 @@ public class RemoteServer implements Server
    private static final String GET_SAVE_PLOT_CONTEXT = "get_save_plot_context";
    private static final String LOCATOR_COMPLETED = "locator_completed";
    private static final String SET_MANIPULATOR_VALUES = "set_manipulator_values";
+   private static final String MANIPULATOR_PLOT_CLICKED = "manipulator_plot_clicked";
 
    private static final String CREATE_PROJECT = "create_project";
    private static final String READ_PROJECT_CONFIG = "read_project_config";
@@ -1702,7 +1887,6 @@ public class RemoteServer implements Server
    
    private static final String NEW_DOCUMENT = "new_document";
    private static final String OPEN_DOCUMENT = "open_document";
-   private static final String LIST_DOCUMENTS = "list_documents";
    private static final String SAVE_DOCUMENT = "save_document";
    private static final String SAVE_DOCUMENT_DIFF = "save_document_diff";
    private static final String CHECK_FOR_EXTERNAL_EDIT = "check_for_external_edit";
@@ -1736,7 +1920,13 @@ public class RemoteServer implements Server
    private static final String VCS_STAGE = "vcs_stage";
    private static final String VCS_UNSTAGE = "vcs_unstage";
    private static final String VCS_FULL_STATUS = "vcs_full_status";
+   private static final String VCS_LIST_BRANCHES = "vcs_list_branches";
+   private static final String VCS_CHECKOUT = "vcs_checkout";
    private static final String VCS_COMMIT_GIT = "vcs_commit_git";
+   private static final String VCS_CLONE = "vcs_clone";
+   private static final String VCS_PUSH = "vcs_push";
+   private static final String VCS_PULL = "vcs_pull";
+   private static final String ASKPASS_COMPLETED = "askpass_completed";
    private static final String VCS_DIFF_FILE = "vcs_diff_file";
    private static final String VCS_APPLY_PATCH = "vcs_apply_patch";
    private static final String VCS_HISTORY = "vcs_history";

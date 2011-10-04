@@ -145,6 +145,62 @@ void UserSettings::setUiPrefs(const core::json::Object& prefsObject)
    std::ostringstream output;
    json::writeFormatted(prefsObject, output);
    settings_.set(kUiPrefs, output.str());
+
+   updatePrefsCache(prefsObject);
+}
+
+namespace {
+
+template <typename T>
+T readPref(const json::Object& prefs,
+           const std::string& name,
+           const T& defaultValue)
+{
+   T value;
+   Error error = json::readObject(prefs,
+                                  name,
+                                  defaultValue,
+                                  &value);
+   if (error)
+   {
+      value = defaultValue;
+      error.addProperty("pref", name);
+      LOG_ERROR(error);
+   }
+
+   return value;
+}
+
+} // anonymous namespace
+
+void UserSettings::updatePrefsCache(const json::Object& prefs) const
+{ 
+   bool useSpacesForTab = readPref<bool>(prefs, "use_spaces_for_tab", true);
+   pUseSpacesForTab_.reset(new bool(useSpacesForTab));
+
+   int numSpacesForTab = readPref<int>(prefs, "num_spaces_for_tab", 2);
+   pNumSpacesForTab_.reset(new int(numSpacesForTab));
+
+   std::string enc = readPref<std::string>(prefs, "default_encoding", "");
+   pDefaultEncoding_.reset(new std::string(enc));
+}
+
+
+// readers for ui prefs
+
+bool UserSettings::useSpacesForTab() const
+{
+   return readUiPref<bool>(pUseSpacesForTab_);
+}
+
+int UserSettings::numSpacesForTab() const
+{
+   return readUiPref<int>(pNumSpacesForTab_);
+}
+
+std::string UserSettings::defaultEncoding() const
+{
+   return readUiPref<std::string>(pDefaultEncoding_);
 }
 
 bool UserSettings::alwaysRestoreLastProject() const
@@ -247,14 +303,8 @@ void UserSettings::setBioconductorMirror(
 
 bool UserSettings::vcsEnabled() const
 {
-   return settings_.getBool("vcsEnabled", false);
+   return settings_.getBool("vcsEnabled", true);
 }
-
-bool UserSettings::indexingEnabled() const
-{
-   return settings_.getBool("indexingEnabled", false);
-}
-
 
 bool UserSettings::alwaysSaveHistory() const
 {

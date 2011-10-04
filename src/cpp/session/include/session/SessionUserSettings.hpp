@@ -17,6 +17,7 @@
 #include <string>
 
 #include <boost/utility.hpp>
+#include <boost/scoped_ptr.hpp>
 
 #include <core/Settings.hpp>
 #include <core/FilePath.hpp>
@@ -74,6 +75,11 @@ public:
    core::json::Object uiPrefs() const;
    void setUiPrefs(const core::json::Object& prefsObject);
 
+   // readers for ui prefs
+   bool useSpacesForTab() const;
+   int numSpacesForTab() const;
+   std::string defaultEncoding() const;
+
    bool alwaysRestoreLastProject() const;
    void setAlwaysRestoreLastProject(bool alwaysRestore);
 
@@ -103,15 +109,31 @@ public:
 
    bool vcsEnabled() const;
 
-   bool indexingEnabled() const;
-
 private:
    core::FilePath getWorkingDirectoryValue(const std::string& key) const;
    void setWorkingDirectoryValue(const std::string& key,
                                  const core::FilePath& filePath) ;
 
+   void updatePrefsCache() const;
+   void updatePrefsCache(const core::json::Object& uiPrefs) const;
+
+   template <typename T>
+   T readUiPref(const boost::scoped_ptr<T>& pPref) const
+   {
+      if (!pPref)
+         updatePrefsCache(uiPrefs());
+
+      return *pPref;
+   }
+
 private:
    core::Settings settings_;
+
+   // cached prefs values
+   mutable boost::scoped_ptr<bool> pUseSpacesForTab_;
+   mutable boost::scoped_ptr<int> pNumSpacesForTab_;
+   mutable boost::scoped_ptr<std::string> pDefaultEncoding_;
+
 };
    
 } // namespace session

@@ -50,6 +50,13 @@ void setManipulatorJsonValue(SEXP manipulatorSEXP,
       LOG_ERROR(error);
 }
 
+void setManipulatorValueToFalse(SEXP manipulatorSEXP, const std::string& name)
+{
+   setManipulatorJsonValue(manipulatorSEXP,
+                           std::make_pair(name, json::toJsonValue(false)));
+}
+
+
 void safeExecuteManipulator(SEXP manipulatorSEXP)
 {
    try
@@ -68,6 +75,26 @@ void safeExecuteManipulator(SEXP manipulatorSEXP)
       }
    }
    CATCH_UNEXPECTED_EXCEPTION
+}
+
+void setManipulatorButtonsToFalse(SEXP manipulatorSEXP)
+{
+   // get the list of buttons
+   std::vector<std::string> buttonNames;
+   Error error = r::exec::RFunction("manipulate:::buttonNames",
+                                    manipulatorSEXP).call(&buttonNames);
+   if (error)
+   {
+      logAndReportError(error, ERROR_LOCATION);
+      return;
+   }
+
+   // set the values
+   std::for_each(buttonNames.begin(),
+                 buttonNames.end(),
+                 boost::bind(setManipulatorValueToFalse,
+                             manipulatorSEXP,
+                             _1));
 }
 
 SEXP rs_executeAndAttachManipulator(SEXP manipulatorSEXP)
@@ -116,8 +143,12 @@ PlotManipulatorManager::PlotManipulatorManager()
 }
       
 
-Error PlotManipulatorManager::initialize()
+Error PlotManipulatorManager::initialize(
+                           const UnitConversionFunctions& convert)
 {
+   // save reference to device conversion function
+   convert_ = convert;
+
    // register R entry points for this class
    R_CallMethodDef execManipulatorMethodDef ;
    execManipulatorMethodDef.name = "rs_executeAndAttachManipulator" ;
@@ -206,10 +237,33 @@ SEXP PlotManipulatorManager::activeManipulator() const
    }
 }
 
+bool PlotManipulatorManager::trackingMouseClicks(SEXP manipulatorSEXP) const
+{
+   r::exec::RFunction trackingMouseClicks("manipulate:::trackingMouseClicks");
+   trackingMouseClicks.addParam(manipulatorSEXP);
+   bool tracking = false;
+   Error error = trackingMouseClicks.call(&tracking);
+   if (error)
+      logAndReportError(error, ERROR_LOCATION);
+   return tracking;
+}
+
+bool PlotManipulatorManager::manipulatorIsActive() const
+{
+   return plotManager().hasPlot() &&
+          plotManager().activePlot().hasManipulator();
+}
+
+void PlotManipulatorManager::replayManipulator(SEXP manipulatorSEXP)
+{
+   replayingManipulator_ = true;
+   safeExecuteManipulator(manipulatorSEXP);
+   replayingManipulator_ = false;
+}
+
 void PlotManipulatorManager::setPlotManipulatorValues(const json::Object& values)
 {
-   if (plotManager().hasPlot() &&
-       plotManager().activePlot().hasManipulator())
+   if (manipulatorIsActive())
    {
       // get the manipulator
       SEXP manipulatorSEXP = plotManager().activePlot().manipulatorSEXP();
@@ -220,13 +274,68 @@ void PlotManipulatorManager::setPlotManipulatorValues(const json::Object& values
                     boost::bind(setManipulatorJsonValue, manipulatorSEXP, _1));
 
       // replay the manipulator
-      replayingManipulator_ = true;
-      safeExecuteManipulator(manipulatorSEXP);
-      replayingManipulator_ = false;
+      replayManipulator(manipulatorSEXP);
+
+      // set all of the buttons to false
+      setManipulatorButtonsToFalse(manipulatorSEXP);
    }
    else
    {
       LOG_WARNING_MESSAGE("called setPlotManipulatorValues but active plot "
+                          "has no manipulator");
+   }
+}
+
+void PlotManipulatorManager::manipulatorPlotClicked(int x, int y)
+{
+   if (manipulatorIsActive())
+   {
+      // get the manipulator
+      SEXP manipulatorSEXP = plotManager().activePlot().manipulatorSEXP();
+
+      // check if we are tracking mouse clicks
+      if (trackingMouseClicks(manipulatorSEXP))
+      {
+         // transform the coordinates to user
+         double deviceX = x;
+         double deviceY = y;
+         double userX = x;
+         double userY = y; 
+         convert_.deviceToUser(&userX, &userY);
+         double ndcX = x;
+         double ndcY = y;
+         convert_.deviceToNDC(&ndcX,&ndcY);
+
+         // set the mouse click state
+         r::exec::RFunction setMouseClick("manipulate:::setMouseClick");
+         setMouseClick.addParam(manipulatorSEXP);
+         setMouseClick.addParam(deviceX);
+         setMouseClick.addParam(deviceY);
+         setMouseClick.addParam(userX);
+         setMouseClick.addParam(userY);
+         setMouseClick.addParam(ndcX);
+         setMouseClick.addParam(ndcY);
+         Error error = setMouseClick.call();
+         if (error)
+         {
+            logAndReportError(error, ERROR_LOCATION);
+            return;
+         }
+
+         // replay the manipulator
+         replayManipulator(manipulatorSEXP);
+
+         // unset the mouse click state
+         r::exec::RFunction clearMouseClick("manipulate:::clearMouseClick");
+         clearMouseClick.addParam(manipulatorSEXP);
+         error = clearMouseClick.call();
+         if (error)
+            logAndReportError(error, ERROR_LOCATION);
+      }
+   }
+   else
+   {
+      LOG_WARNING_MESSAGE("called manipulatorPlotClicked but active plot "
                           "has no manipulator");
    }
 }

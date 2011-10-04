@@ -24,6 +24,10 @@
 #include <session/SessionUserSettings.hpp>
 #include <session/SessionPersistentState.hpp>
 
+#include <r/session/RSessionUtils.hpp>
+
+#include "SessionProjectsInternal.hpp"
+
 using namespace core;
 
 namespace session {
@@ -62,8 +66,8 @@ Error createProject(const json::JsonRpcRequest& request,
       return error;
 
    // create the project file
-   r_util::RProjectConfig config;
-   return r_util::writeProjectFile(projectFilePath, config);
+   return r_util::writeProjectFile(projectFilePath,
+                                   ProjectContext::defaultConfig());
 }
 
 json::Object projectConfigJson(const r_util::RProjectConfig& config)
@@ -73,6 +77,10 @@ json::Object projectConfigJson(const r_util::RProjectConfig& config)
    configJson["restore_workspace"] = config.restoreWorkspace;
    configJson["save_workspace"] = config.saveWorkspace;
    configJson["always_save_history"] = config.alwaysSaveHistory;
+   configJson["enable_code_indexing"] = config.enableCodeIndexing;
+   configJson["use_spaces_for_tab"] = config.useSpacesForTab;
+   configJson["num_spaces_for_tab"] = config.numSpacesForTab;
+   configJson["default_encoding"] = config.encoding;
    return configJson;
 }
 
@@ -93,7 +101,11 @@ Error writeProjectConfig(const json::JsonRpcRequest& request,
                     "version", &(config.version),
                     "restore_workspace", &(config.restoreWorkspace),
                     "save_workspace", &(config.saveWorkspace),
-                    "always_save_history", &(config.alwaysSaveHistory));
+                    "always_save_history", &(config.alwaysSaveHistory),
+                    "enable_code_indexing", &(config.enableCodeIndexing),
+                    "use_spaces_for_tab", &(config.useSpacesForTab),
+                    "num_spaces_for_tab", &(config.numSpacesForTab),
+                    "default_encoding", &(config.encoding));
    if (error)
       return error;
 
@@ -172,6 +184,7 @@ void startup()
             !userSettings().lastProjectPath().empty() &&
             !session::persistentState().hadAbend())
    {
+
       // get last project path
       projectFilePath = userSettings().lastProjectPath();
 
@@ -192,7 +205,7 @@ void startup()
    if (!projectFilePath.empty())
    {
       std::string userErrMsg;
-      Error error = s_projectContext.initialize(projectFilePath, &userErrMsg);
+      Error error = s_projectContext.startup(projectFilePath, &userErrMsg);
       if (error)
       {
          // log the error
@@ -216,6 +229,11 @@ void startup()
 
 Error initialize()
 {
+   // call project-context initialize
+   Error error = s_projectContext.initialize();
+   if (error)
+      return error;
+
    using boost::bind;
    using namespace module_context;
    ExecBlock initBlock ;
@@ -227,7 +245,7 @@ Error initialize()
    return initBlock.execute();
 }
 
-const ProjectContext& projectContext()
+ProjectContext& projectContext()
 {
    return s_projectContext;
 }

@@ -33,6 +33,8 @@ import com.google.inject.Inject;
 import org.rstudio.core.client.SafeHtmlUtil;
 import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.core.client.dom.DomUtils.NodePredicate;
+import org.rstudio.core.client.widget.FontSizer;
+import org.rstudio.core.client.widget.MultiSelectCellTable;
 import org.rstudio.studio.client.common.vcs.VCSServerOperations.PatchMode;
 import org.rstudio.studio.client.workbench.views.vcs.diff.Line.Type;
 import org.rstudio.studio.client.workbench.views.vcs.diff.LineTablePresenter.Display;
@@ -45,7 +47,7 @@ import org.rstudio.studio.client.workbench.views.vcs.events.DiffLineActionHandle
 import java.util.ArrayList;
 import java.util.HashSet;
 
-public class LineTableView extends CellTable<ChunkOrLine> implements Display
+public class LineTableView extends MultiSelectCellTable<ChunkOrLine> implements Display
 {
    public interface LineTableResources extends CellTable.Resources
    {
@@ -60,6 +62,7 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
       String same();
       String insertion();
       String deletion();
+      String comment();
 
       String actions();
       String lineActions();
@@ -172,6 +175,40 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
       }
    }
 
+   private class SwitchableSelectionModel<T> extends MultiSelectionModel<T>
+   {
+      private SwitchableSelectionModel()
+      {
+      }
+
+      private SwitchableSelectionModel(ProvidesKey<T> keyProvider)
+      {
+         super(keyProvider);
+      }
+
+      @Override
+      public void setSelected(T object, boolean selected)
+      {
+         if (!enabled_)
+            return;
+
+         super.setSelected(object, selected);
+      }
+
+      @SuppressWarnings("unused")
+      public boolean isEnabled()
+      {
+         return enabled_;
+      }
+
+      public void setEnabled(boolean enabled)
+      {
+         this.enabled_ = enabled;
+      }
+
+      private boolean enabled_ = true;
+   }
+
    public LineTableView()
    {
       this(GWT.<LineTableResources>create(LineTableResources.class));
@@ -182,6 +219,8 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
    {
       super(1, res);
 
+      FontSizer.applyNormalFontSize(this);
+
       TextColumn<ChunkOrLine> oldCol = new TextColumn<ChunkOrLine>()
       {
          @Override
@@ -190,6 +229,7 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
             Line line = object.getLine();
             return line == null ? "" :
                    line.getType() == Type.Insertion ? "" :
+                   line.getType() == Type.Comment ? "" :
                    intToString(line.getOldLine());
          }
       };
@@ -202,8 +242,9 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
          {
             Line line = object.getLine();
             return line == null ? "" :
-                   line.getType() == Type.Deletion ? ""
-                   : intToString(line.getNewLine());
+                   line.getType() == Type.Deletion ? "" :
+                   line.getType() == Type.Comment ? "" :
+                   intToString(line.getNewLine());
          }
       };
       addColumn(newCol);
@@ -250,6 +291,8 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
                      return prefix + res.cellTableStyle().insertion();
                   case Deletion:
                      return prefix + res.cellTableStyle().deletion();
+                  case Comment:
+                     return prefix + res.cellTableStyle().comment();
                   default:
                      return "";
                }
@@ -258,7 +301,7 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
          }
       });
 
-      selectionModel_ = new MultiSelectionModel<ChunkOrLine>(new ProvidesKey<ChunkOrLine>()
+      selectionModel_ = new SwitchableSelectionModel<ChunkOrLine>(new ProvidesKey<ChunkOrLine>()
       {
          @Override
          public Object getKey(ChunkOrLine item)
@@ -301,6 +344,7 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
    public void setShowActions(boolean showActions)
    {
       showActions_ = showActions;
+      selectionModel_.setEnabled(showActions);
    }
 
    @Override
@@ -327,26 +371,44 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
       endRows_.clear();
 
       Line.Type state = Line.Type.Same;
+      boolean suppressNextStart = true; // Suppress at start to avoid 2px border
       for (int i = 0; i < lines_.size(); i++)
       {
          ChunkOrLine chunkOrLine = lines_.get(i);
          Line line = chunkOrLine.getLine();
-         Line.Type newState = line == null ? Line.Type.Same : line.getType();
+         boolean isChunk = line == null;
+         Line.Type newState = isChunk ? Line.Type.Same : line.getType();
 
          // Edge case: last line is a diff line
          if (newState != Line.Type.Same && i == lines_.size() - 1)
             endRows_.add(i);
 
-         if (newState == state)
-            continue;
+         if (newState != state)
+         {
+            // Note: endRows_ doesn't include the borders between insertions and
+            // deletions, or vice versa. This is to avoid 2px borders between
+            // these regions when just about everything else is 1px.
+            if (state != Line.Type.Same && newState == Line.Type.Same)
+               endRows_.add(i-1);
+            if (!suppressNextStart && newState != Line.Type.Same)
+               startRows_.add(i);
 
-         if (state != Line.Type.Same)
-            endRows_.add(i-1);
-         if (newState != Line.Type.Same)
-            startRows_.add(i);
+            state = newState;
+         }
 
-         state = newState;
+         suppressNextStart = isChunk;
       }
+   }
+
+   @Override
+   protected boolean canSelectVisibleRow(int visibleRow)
+   {
+      if (visibleRow < 0 || visibleRow >= lines_.size())
+         return false;
+
+      Line line = lines_.get(visibleRow).getLine();
+      return line != null && (line.getType() == Type.Insertion
+                              || line.getType() == Type.Deletion);
    }
 
    @Override
@@ -400,7 +462,7 @@ public class LineTableView extends CellTable<ChunkOrLine> implements Display
 
    private boolean showActions_ = true;
    private ArrayList<ChunkOrLine> lines_;
-   private MultiSelectionModel<ChunkOrLine> selectionModel_;
+   private SwitchableSelectionModel<ChunkOrLine> selectionModel_;
    private HashSet<Integer> startRows_ = new HashSet<Integer>();
    private HashSet<Integer> endRows_ = new HashSet<Integer>();
    private static final LineTableResources RES = GWT.create(LineTableResources.class);

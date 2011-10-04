@@ -36,9 +36,12 @@
 #include <core/LogWriter.hpp>
 #include <core/Error.hpp>
 #include <core/FileLogWriter.hpp>
+#include <core/StderrLogWriter.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileInfo.hpp>
 #include <core/DateTime.hpp>
 #include <core/StringUtils.hpp>
+#include <core/system/Environment.hpp>
 
 #ifndef JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 #define JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE 0x2000
@@ -98,6 +101,17 @@ Error initJobObject(bool* detachFromJob)
    return Success();
 }
 
+bool isHiddenFile(const std::string& path)
+{
+   DWORD attribs = ::GetFileAttributesA(path.c_str());
+   if (attribs == INVALID_FILE_ATTRIBUTES)
+      return false;
+   else if (attribs & FILE_ATTRIBUTE_HIDDEN)
+      return true;
+   else
+      return false;
+}
+
 } // anonymous namespace
 
 void initHook()
@@ -150,6 +164,15 @@ void initializeSystemLog(const std::string& programIdentity, int logLevel)
 {
 }
 
+void initializeStderrLog(const std::string& programIdentity, int logLevel)
+{
+   if (s_pLogWriter)
+      delete s_pLogWriter;
+
+   s_pLogWriter = new StderrLogWriter(programIdentity, logLevel);
+}
+
+
 void initializeLog(const std::string& programIdentity, int logLevel, const FilePath& settingsDir)
 {
    if (s_pLogWriter)
@@ -168,43 +191,6 @@ bool isWin64()
 {
    return !getenv("PROCESSOR_ARCHITEW6432").empty()
          || getenv("PROCESSOR_ARCHITECTURE") == "AMD64";
-}
-
-// Value returned is UTF-8 encoded
-std::string getenv(const std::string& name)
-{
-   std::wstring nameWide(name.begin(), name.end());
-
-   // get the variable
-   DWORD nSize = 256;
-   std::vector<wchar_t> buffer(nSize);
-   DWORD result = ::GetEnvironmentVariableW(nameWide.c_str(), &(buffer[0]), nSize);
-   if (result == 0) // not found
-   {
-      return std::string();
-   }
-   if (result > nSize) // not enough space in buffer
-   {
-      nSize = result;
-      buffer.resize(nSize);
-      result = ::GetEnvironmentVariableW(nameWide.c_str(), &(buffer[0]), nSize);
-      if (result == 0 || result > nSize)
-         return std::string(); // VERY unexpected failure case
-   }
-
-   // return it
-   return string_utils::wideToUtf8(&(buffer[0]));
-}
-
-void setenv(const std::string& name, const std::string& value)
-{
-   ::SetEnvironmentVariableW(string_utils::utf8ToWide(name).c_str(),
-                             string_utils::utf8ToWide(value).c_str());
-}
-
-void unsetenv(const std::string& name)
-{
-   ::SetEnvironmentVariable(name.c_str(), NULL);
 }
 
 std::string username()
@@ -323,13 +309,12 @@ Error captureCommand(const std::string& command, std::string* pOutput)
 
 bool isHiddenFile(const FilePath& filePath)
 {
-   DWORD attribs = ::GetFileAttributesA(filePath.absolutePath().c_str());
-   if (attribs == INVALID_FILE_ATTRIBUTES)
-      return false;
-   else if (attribs & FILE_ATTRIBUTE_HIDDEN)
-      return true;
-   else
-      return false;
+   return isHiddenFile(filePath.absolutePath());
+}
+
+bool isHiddenFile(const FileInfo& fileInfo)
+{
+   return isHiddenFile(fileInfo.absolutePath());
 }
 
 Error makeFileHidden(const FilePath& path)
@@ -598,7 +583,15 @@ Error copyMetafileToClipboard(const FilePath& path)
    return Success();
 }
 
-
+Error terminateProcess(PidType pid)
+{
+   HANDLE hProc = ::OpenProcess(PROCESS_TERMINATE, false, pid);
+   if (!hProc)
+      return systemError(::GetLastError(), ERROR_LOCATION);
+   if (!::TerminateProcess(hProc, 1))
+      return systemError(::GetLastError(), ERROR_LOCATION);
+   return Success();
+}
 
 } // namespace system
 } // namespace core

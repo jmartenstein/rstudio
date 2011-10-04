@@ -26,14 +26,15 @@ public class ManipulatorManager
 {
    public ManipulatorManager(Panel plotsSurface,
                              Commands commands,
-                             ManipulatorChangedHandler changedHandler)
+                             ManipulatorChangedHandler changedHandler,
+                             final ClickHandler plotsClickHandler)
    {
       ManipulatorResources resources = ManipulatorResources.INSTANCE;
       ManipulatorStyles styles = ManipulatorStyles.INSTANCE;
       
       // references
       plotsSurface_ = plotsSurface;
-       
+      
       // no manipulator to start
       manipulator_ = null;
       manipulatorPopup_ = null;
@@ -58,7 +59,21 @@ public class ManipulatorManager
       
       // create manipulator popup panel
       manipulatorPopup_ = new ManipulatorPopupPanel(changedHandler);
+      manipulatorPopup_.addAutoHidePartner(plotsSurface_.getElement());
+      
+      // forward click event to caller
+      plotsSurface_.addDomHandler(new ClickHandler() {
+         @Override
+         public void onClick(ClickEvent event)
+         {
+            if (manipulator_ != null)
+               plotsClickHandler.onClick(event);   
+         }
+         
+      }, ClickEvent.getType());
    }
+   
+   
    
    
    public void setManipulator(Manipulator manipulator, boolean show)
@@ -77,8 +92,8 @@ public class ManipulatorManager
          // if we have a manipulator then show if requested, otherwise hide
          if (manipulator_ != null)
          {
-            // show if requested
-            if (show)
+            // show if requested and there are controls
+            if (show && manipulator_.hasControls())
                showManipulatorPopup();  
          }
          else
@@ -107,6 +122,7 @@ public class ManipulatorManager
          manipulatorButton_.setVisible(manipulator_ != null);
       }
    }
+ 
    
    private boolean isNewManipulatorState(Manipulator manipulator)
    {

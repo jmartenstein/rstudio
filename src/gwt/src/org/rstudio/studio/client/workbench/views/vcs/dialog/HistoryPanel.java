@@ -13,6 +13,7 @@
 package org.rstudio.studio.client.workbench.views.vcs.dialog;
 
 import com.google.gwt.core.client.GWT;
+import com.google.gwt.event.dom.client.ClickHandler;
 import com.google.gwt.event.dom.client.HasClickHandlers;
 import com.google.gwt.resources.client.ClientBundle;
 import com.google.gwt.uibinder.client.UiBinder;
@@ -21,8 +22,12 @@ import com.google.gwt.user.client.ui.Composite;
 import com.google.gwt.user.client.ui.ScrollPanel;
 import com.google.gwt.user.client.ui.SplitLayoutPanel;
 import com.google.gwt.user.client.ui.Widget;
+import com.google.inject.Inject;
 import org.rstudio.core.client.widget.LeftRightToggleButton;
 import org.rstudio.core.client.widget.Toolbar;
+import org.rstudio.core.client.widget.ToolbarButton;
+import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.workbench.views.vcs.BranchToolbarButton;
 import org.rstudio.studio.client.workbench.views.vcs.dialog.HistoryPresenter.CommitDetailDisplay;
 import org.rstudio.studio.client.workbench.views.vcs.dialog.HistoryPresenter.CommitListDisplay;
 import org.rstudio.studio.client.workbench.views.vcs.dialog.HistoryPresenter.Display;
@@ -45,7 +50,9 @@ public class HistoryPanel extends Composite implements Display
    interface Binder extends UiBinder<Widget, HistoryPanel>
    {}
 
-   public HistoryPanel()
+   @Inject
+   public HistoryPanel(BranchToolbarButton branchToolbarButton,
+                       Commands commands)
    {
       splitPanel_ = new SplitLayoutPanel(4);
       initWidget(GWT.<Binder>create(Binder.class).createAndBindUi(this));
@@ -57,6 +64,25 @@ public class HistoryPanel extends Composite implements Display
 
       switchViewButton_ = new LeftRightToggleButton("Changes", "History", false);
       topToolbar_.addLeftWidget(switchViewButton_);
+      topToolbar_.addLeftWidget(branchToolbarButton);
+
+      refreshButton_ = new ToolbarButton(
+            "Refresh", commands.vcsRefresh().getImageResource(),
+            (ClickHandler) null);
+      topToolbar_.addRightWidget(refreshButton_);
+
+      topToolbar_.addRightSeparator();
+
+      topToolbar_.addRightWidget(new ToolbarButton(
+            "Pull", commands.vcsPull().getImageResource(),
+            commands.vcsPull()));
+
+      topToolbar_.addRightSeparator();
+
+      topToolbar_.addRightWidget(new ToolbarButton(
+            "Push", commands.vcsPush().getImageResource(),
+            commands.vcsPush()));
+
    }
 
    @Override
@@ -83,6 +109,12 @@ public class HistoryPanel extends Composite implements Display
       return commitDetail_;
    }
 
+   @Override
+   public HasClickHandlers getRefreshButton()
+   {
+      return refreshButton_;
+   }
+
    @UiField(provided = true)
    SplitLayoutPanel splitPanel_;
    @UiField
@@ -100,4 +132,6 @@ public class HistoryPanel extends Composite implements Display
    {
       GWT.<Resources>create(Resources.class).styles().ensureInjected();
    }
+
+   private ToolbarButton refreshButton_;
 }

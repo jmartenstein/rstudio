@@ -276,8 +276,7 @@ var RCodeModel = function(doc, tokenizer, statePattern) {
             var pos = tokenCursor.currentPosition();
             if (tokenCursor.isLastSignificantTokenOnLine())
             {
-               pos.row++;
-               pos.column = 0;
+               pos.column = this.$getLine(pos.row).length + 1;
             }
             else
             {
@@ -303,6 +302,13 @@ var RCodeModel = function(doc, tokenizer, statePattern) {
       return list[0].children;
    };
 
+   this.findFunctionDefinitionFromUsage = function(usagePos, functionName)
+   {
+      this.$buildScopeTreeUpToRow(this.$doc.getLength() - 1);
+      return this.$scopes.findFunctionDefinitionFromUsage(usagePos,
+                                                          functionName);
+   };
+
    this.getIndentForOpenBrace = function(pos)
    {
       if (this.$tokenizeUpToRow(pos.row))
@@ -321,6 +327,9 @@ var RCodeModel = function(doc, tokenizer, statePattern) {
 
    this.getNextLineIndent = function(lastRow, line, endState, tab, tabSize)
    {
+      if (endState == "qstring" || endState == "qqstring")
+         return "";
+
       // This lineOverrides nonsense is necessary because the line has not 
       // changed in the real document yet. We need to simulate it by replacing
       // the real line with the `line` param, and when we finish with this
@@ -481,6 +490,12 @@ var RCodeModel = function(doc, tokenizer, statePattern) {
             }
          }
       }
+      else if (prevToken
+                  && prevToken.token.type === "keyword"
+                  && (prevToken.token.value === "repeat" || prevToken.token.value === "else"))
+      {
+         return this.$getIndent(this.$getLine(prevToken.row));
+      }
 
       return this.$getIndent(lastRow);
    };
@@ -559,7 +574,15 @@ var RCodeModel = function(doc, tokenizer, statePattern) {
       }
       else if (delta.action === "removeText")
       {
-         this.$invalidateRow(delta.range.start.row);
+         if (this.$doc.isNewLine(delta.text))
+         {
+            this.$removeRows(delta.range.end.row, 1);
+            this.$invalidateRow(delta.range.start.row);
+         }
+         else
+         {
+            this.$invalidateRow(delta.range.start.row);
+         }
       }
 
       this.$scopes.invalidateFrom(delta.range.start);

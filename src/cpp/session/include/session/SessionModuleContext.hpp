@@ -19,6 +19,7 @@
 #include <boost/utility.hpp>
 #include <boost/function.hpp>
 #include <boost/signals.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include <core/system/System.hpp>
 #include <core/system/FileChangeEvent.hpp>
@@ -70,24 +71,43 @@ typedef boost::function<bool(const core::FilePath&)> RBrowseFileHandler;
 core::Error registerRBrowseFileHandler(const RBrowseFileHandler& handler);
    
 // register an inbound uri handler (include a leading slash)
+core::Error registerAsyncUriHandler(
+                   const std::string& name,
+                   const core::http::UriAsyncHandlerFunction& handlerFunction);
+
+// register an inbound uri handler (include a leading slash)
 core::Error registerUriHandler(
-                        const std::string& name, 
+                        const std::string& name,
                         const core::http::UriHandlerFunction& handlerFunction);
-   
+
+// register a local uri handler (scoped by a special prefix which indicates
+// a local scope)
+core::Error registerAsyncLocalUriHandler(
+                   const std::string& name,
+                   const core::http::UriAsyncHandlerFunction& handlerFunction);
+
 // register a local uri handler (scoped by a special prefix which indicates
 // a local scope)
 core::Error registerLocalUriHandler(
-                        const std::string& name, 
+                        const std::string& name,
                         const core::http::UriHandlerFunction& handlerFunction);
-   
+
+typedef boost::function<void(int, const std::string&)> PostbackHandlerContinuation;
+
 // register a postback handler. see docs in SessionPostback.cpp for 
 // details on the requirements of postback handlers
-typedef boost::function<void(const std::string&)> PostbackHandlerFunction;
+typedef boost::function<void(const std::string&, const PostbackHandlerContinuation&)>
+                                                      PostbackHandlerFunction;
 core::Error registerPostbackHandler(
                               const std::string& name,
                               const PostbackHandlerFunction& handlerFunction,
                               std::string* pShellCommand); 
                         
+// register an rpc method
+core::Error registerAsyncRpcMethod(
+                              const std::string& name,
+                              const core::json::JsonRpcAsyncFunction& function);
+
 // register an rpc method
 core::Error registerRpcMethod(const std::string& name,
                               const core::json::JsonRpcFunction& function);
@@ -96,6 +116,17 @@ core::Error registerRpcMethod(const std::string& name,
 core::Error executeAsync(const core::json::JsonRpcFunction& function,
                          const core::json::JsonRpcRequest& request,
                          core::json::JsonRpcResponse* pResponse);
+
+
+// create a waitForMethod function -- when called this function will:
+//
+//   (a) enque the passed event
+//   (b) wait for the specified methodName to be returned from the client
+//   (c) automatically re-issue the event after a client-init
+//
+typedef boost::function<bool(core::json::JsonRpcRequest*)> WaitForMethodFunction;
+WaitForMethodFunction registerWaitForMethod(const std::string& methodName,
+                                            const ClientEvent& event);
 
 namespace {
 
@@ -154,6 +185,7 @@ struct Events : boost::noncopyable
    boost::signal<void ()>              onBeforeExecute;
    boost::signal<void (ChangeSource)>  onDetectChanges;
    boost::signal<void()>               onDeferredInit;
+   boost::signal<void(bool)>           onBackgroundProcessing;
    boost::signal<void(bool)>           onShutdown;
    boost::signal<void ()>              onSysSleep;
 };
@@ -169,15 +201,55 @@ core::Error executeInterruptableChild(const std::string& path,
 // ProcessSupervisor
 core::system::ProcessSupervisor& processSupervisor();
 
+// schedule incremental work. execute will be called back periodically
+// (up to every 25ms if the process is completely idle). if execute
+// returns true then it will be called back again, if it returns false
+// then it won't ever be called again. in a given period of work the
+// execute method will be called multiple times (consecutively) for up
+// to the specified incrementalDuration. if you want to implement a
+// stateful worker simply create a shared_ptr to your worker object
+// and then bind one of its members as the execute parameter. passing
+// true as the idleOnly parameter (the default) means that the execute
+// function will only be called back during idle time (when the session
+// is waiting for user input)
+void scheduleIncrementalWork(
+         const boost::posix_time::time_duration& incrementalDuration,
+         const boost::function<bool()>& execute,
+         bool idleOnly = true);
+
+// variation of scheduleIncrementalWork which performs a configurable
+// amount of work immediately. this work occurs synchronously with the
+// call and will consist of execute being called back repeatedly for
+// up to the specified initialDuration
+void scheduleIncrementalWork(
+         const boost::posix_time::time_duration& initialDuration,
+         const boost::posix_time::time_duration& incrementalDuration,
+         const boost::function<bool()>& execute,
+         bool idleOnly = true);
+
+
+core::Error readAndDecodeFile(const core::FilePath& filePath,
+                              const std::string& encoding,
+                              bool allowSubstChars,
+                              std::string* pContents);
+
+
 // source R files
 core::Error sourceModuleRFile(const std::string& rSourceFile);   
    
 // enque client events (note R methods can do this via .rs.enqueClientEvent)
 void enqueClientEvent(const ClientEvent& event);
 
-// enque file changed event
-void enqueFileChangedEvent(const core::system::FileChangeEvent& event,
-                           const std::string& vcsStatus);
+// check whether a directory is currently being monitored by one of our subsystems
+bool isDirectoryMonitored(const core::FilePath& directory);
+
+// convenience method for filtering out file listing and changes
+bool fileListingFilter(const core::FileInfo& fileInfo);
+
+// enque file changed events
+void enqueFileChangedEvent(const core::system::FileChangeEvent& event);
+void enqueFileChangedEvents(const core::FilePath& vcsStatusRoot,
+                            const std::vector<core::system::FileChangeEvent>& events);
 
 // write output to the console (convenience wrapper for enquing a 
 // kConsoleWriteOutput event)

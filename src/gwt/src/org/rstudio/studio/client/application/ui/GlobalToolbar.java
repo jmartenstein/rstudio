@@ -14,11 +14,14 @@ package org.rstudio.studio.client.application.ui;
 
 import java.util.ArrayList;
 
-import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.theme.res.ThemeResources;
+import org.rstudio.core.client.widget.CanFocus;
+import org.rstudio.core.client.widget.FocusContext;
+import org.rstudio.core.client.widget.FocusHelper;
 import org.rstudio.core.client.widget.Toolbar;
 import org.rstudio.core.client.widget.ToolbarButton;
 import org.rstudio.core.client.widget.ToolbarPopupMenu;
+import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.filetypes.FileTypeCommands;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.icons.StandardIcons;
@@ -26,9 +29,7 @@ import org.rstudio.studio.client.workbench.codesearch.CodeSearch;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.SessionInfo;
 
-import com.google.gwt.core.client.GWT;
-import com.google.gwt.resources.client.ClientBundle;
-import com.google.gwt.resources.client.ImageResource;
+import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Provider;
 
 
@@ -36,6 +37,7 @@ public class GlobalToolbar extends Toolbar
 {
    public GlobalToolbar(Commands commands, 
                         FileTypeCommands fileTypeCommands,
+                        EventBus eventBus,
                         Provider<CodeSearch> pCodeSearch)
    {
       super();
@@ -91,76 +93,56 @@ public class GlobalToolbar extends Toolbar
       addLeftSeparator();
       
       addLeftWidget(commands.printSourceDoc().createToolbarButton());
+      
+      addLeftSeparator();
+      CodeSearch codeSearch = pCodeSearch_.get();
+      codeSearch.setObserver(new CodeSearch.Observer() {     
+         @Override
+         public void onCancel()
+         {
+            codeSearchFocusContext_.restore();     
+         }
+         
+         @Override
+         public void onCompleted()
+         {   
+            codeSearchFocusContext_.clear();
+         }
+         
+         @Override
+         public String getCueText()
+         {
+            return null;
+         }
+      });
+      
+      searchWidget_ = codeSearch.getSearchWidget();
+      addLeftWidget(searchWidget_);
    }
    
    public void addProjectTools(SessionInfo sessionInfo)
-   {
-      if (sessionInfo.isIndexingEnabled())
-      {
-         addLeftSeparator();
-         
-         CodeSearch codeSearch = pCodeSearch_.get();
-         
-         addLeftWidget(codeSearch.getSearchWidget());
-      }
-      
-      
-      ToolbarPopupMenu projectMenu = new ToolbarPopupMenu();
-      
-      projectMenu.addItem(commands_.newProject().createMenuItem(false));
-      projectMenu.addItem(commands_.openProject().createMenuItem(false));
-      projectMenu.addSeparator();
-      projectMenu.addItem(commands_.projectMru0().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru1().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru2().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru3().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru4().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru5().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru6().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru7().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru8().createMenuItem(false));
-      projectMenu.addItem(commands_.projectMru9().createMenuItem(false));
-      projectMenu.addSeparator();
-      projectMenu.addItem(commands_.closeProject().createMenuItem(false));
-      projectMenu.addSeparator();
-      projectMenu.addItem(commands_.projectOptions().createMenuItem(false));
-      
-      String activeProjectFile = sessionInfo.getActiveProjectFile();
-      String menuText = activeProjectFile != null ?
-        FileSystemItem.createFile(activeProjectFile).getParentPath().getStem() :
-        "Project: (None)";
-               
-      ToolbarButton projectButton = new ToolbarButton(
-            menuText, 
-            RESOURCES.projectMenu(),
-            projectMenu, 
-            true);
-      
-      if (activeProjectFile == null)
-      {
-         projectButton.addStyleName(
-               ThemeResources.INSTANCE.themeStyles().emptyProjectMenu());
-      }
-    
-      addRightWidget(projectButton);
+   { 
+      // project popup menu
+      ProjectPopupMenu projectMenu = new ProjectPopupMenu(sessionInfo,
+                                                          commands_);
+      addRightWidget(projectMenu.getToolbarButton());
    }
-
+   
    @Override
    public int getHeight()
    {
       return 27;
    }
+   
+   public void focusGoToFunction()
+   {
+      codeSearchFocusContext_.record();
+      FocusHelper.setFocusDeferred((CanFocus)searchWidget_);
+   }
      
    private final Commands commands_;
-   
-   
    private final Provider<CodeSearch> pCodeSearch_;
-   
-   interface Resources extends ClientBundle
-   {
-      ImageResource projectMenu();
-   }
-   
-   private static final Resources RESOURCES =  
-                              (Resources) GWT.create(Resources.class);
+   private final Widget searchWidget_;
+   private final FocusContext codeSearchFocusContext_ = new FocusContext();
+
 }
